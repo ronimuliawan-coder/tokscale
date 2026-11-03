@@ -1,11 +1,15 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::widgets::{format_cost, format_tokens};
+use super::widgets::{
+    format_cache_hit_percent, format_cost, format_tokens, get_client_color,
+    get_client_display_name, viewport_scrollbar_state,
+};
 use crate::tui::app::App;
 use crate::tui::data::{aggregate_by_period, aggregate_by_weekday, find_peak_hour};
 use crate::tui::i18n::{tr, MessageKey};
 use crate::ui_glyphs::ChartFill;
+use chrono::Timelike;
 
 fn profile_bar_spans(app: &App, filled: usize, empty: usize) -> Vec<Span<'static>> {
     match app.glyphs.chart_fill {
@@ -98,6 +102,17 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     lines.push(Line::from(""));
 
     // Summary line
+    let (total_input, total_cache_read, total_cache_write) =
+        hourly.iter().fold((0u64, 0u64, 0u64), |(i, cr, cw), h| {
+            (
+                i + h.tokens.input,
+                cr + h.tokens.cache_read,
+                cw + h.tokens.cache_write,
+            )
+        });
+    let overall_cache_hit =
+        format_cache_hit_percent(total_cache_read, total_input, total_cache_write, app.glyphs);
+
     let summary_spans = vec![
         Span::styled(
             format!("{} {}", hourly.len(), tr(lang, MessageKey::CountHours)),
@@ -126,6 +141,11 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 tr(lang, MessageKey::ProfileTotalCost)
             ),
             Style::default().fg(Color::Green),
+        ),
+        Span::styled("  |  ", Style::default().fg(app.theme.muted)),
+        Span::styled(
+            format!("{} cache hit", overall_cache_hit),
+            Style::default().fg(Color::Cyan),
         ),
     ];
     lines.push(Line::from(summary_spans));
@@ -185,6 +205,84 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(row));
     }
     lines.push(Line::from(""));
+
+    // Client Activity & Efficiency
+    if !app.data.clients.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "Client Activity & Efficiency",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        lines.push(Line::from(""));
+
+        let mut sorted_clients = app.data.clients.clone();
+        sorted_clients.sort_by_key(|a| std::cmp::Reverse(a.tokens.total()));
+
+        for client in sorted_clients.iter().take(6) {
+            let client_tokens = client.tokens.total();
+            let pct = if total_tokens > 0 {
+                client_tokens as f64 / total_tokens as f64 * 100.0
+            } else {
+                0.0
+            };
+            let cache_pct = format_cache_hit_percent(
+                client.tokens.cache_read,
+                client.tokens.input,
+                client.tokens.cache_write,
+                app.glyphs,
+            );
+
+            // Find peak period for this client
+            let mut period_tokens = [0u64; 4];
+            for entry in hourly {
+                let hour = entry.datetime.hour() as usize;
+                let p_idx = if (5..=11).contains(&hour) {
+                    0
+                } else if (12..=16).contains(&hour) {
+                    1
+                } else if (17..=21).contains(&hour) {
+                    2
+                } else {
+                    3
+                };
+                if let Some(src) = entry.source_breakdown.get(&client.client) {
+                    period_tokens[p_idx] = period_tokens[p_idx].saturating_add(src.tokens.total());
+                }
+            }
+            let period_names = ["Morning", "Daytime", "Evening", "Night"];
+            let (max_p_idx, max_tokens) = period_tokens
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, t)| *t)
+                .unwrap_or((0, &0));
+            let peak_p = if *max_tokens > 0 {
+                period_names[max_p_idx]
+            } else {
+                app.glyphs.missing
+            };
+
+            let client_color = get_client_color(&client.client);
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:<14}", get_client_display_name(&client.client)),
+                    Style::default()
+                        .fg(client_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{:>6.1}% tokens", pct), app.theme.count_style()),
+                Span::styled("  |  Peak: ", Style::default().fg(app.theme.muted)),
+                Span::styled(format!("{:<8}", peak_p), app.theme.hint_key_style()),
+                Span::styled("  |  Cache Hit: ", Style::default().fg(app.theme.muted)),
+                Span::styled(
+                    format!("{:>6}", cache_pct),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
 
     // Weekday breakdown
     lines.push(Line::from(vec![Span::styled(
@@ -311,6 +409,150 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(suffix, Style::default().fg(app.theme.muted)),
     ]));
 
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Left);
+    let visible_height = inner.height as usize;
+    app.hourly_profile_total_lines = lines.len();
+    let scroll_offset = app.scroll_offset.min(
+        app.hourly_profile_total_lines
+            .saturating_sub(visible_height),
+    );
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .scroll((scroll_offset as u16, 0));
     frame.render_widget(paragraph, inner);
+
+    if app.hourly_profile_total_lines > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(
+            app.hourly_profile_total_lines,
+            scroll_offset,
+            visible_height,
+        );
+        frame.render_stateful_widget(app.glyphs.scrollbar(), area, &mut scrollbar_state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::app::TuiConfig;
+    use crate::tui::data::{ClientUsage, HourlySourceInfo, HourlyUsage, TokenBreakdown};
+    use chrono::NaiveDateTime;
+    use ratatui::{backend::TestBackend, Terminal};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn make_app() -> App {
+        let config = TuiConfig {
+            theme: "blue".to_string(),
+            refresh: 0,
+            sessions_path: None,
+            clients: None,
+            since: None,
+            until: None,
+            year: None,
+            initial_tab: None,
+            ..Default::default()
+        };
+        App::new_with_cached_data(config, None).unwrap()
+    }
+
+    #[test]
+    fn hourly_profile_renders_empty_state_cleanly() {
+        let mut app = make_app();
+        app.data.hourly.clear();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &mut app, Rect::new(0, 0, 80, 24)))
+            .unwrap();
+
+        let body = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>();
+        assert!(body.contains("No hourly usage data found"));
+    }
+
+    #[test]
+    fn hourly_profile_renders_client_activity_and_cache_hit() {
+        let mut app = make_app();
+        let dt = NaiveDateTime::parse_from_str("2026-05-29 14:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            "opencode".to_string(),
+            HourlySourceInfo {
+                tokens: TokenBreakdown {
+                    input: 100,
+                    output: 50,
+                    cache_read: 800,
+                    cache_write: 50,
+                    reasoning: 0,
+                },
+                cost: 0.05,
+                message_count: 5,
+                turn_count: 5,
+                models: BTreeMap::new(),
+            },
+        );
+
+        app.data.hourly = vec![HourlyUsage {
+            datetime: dt,
+            tokens: TokenBreakdown {
+                input: 100,
+                output: 50,
+                cache_read: 800,
+                cache_write: 50,
+                reasoning: 0,
+            },
+            cost: 0.05,
+            clients: BTreeSet::from(["opencode".to_string()]),
+            models: BTreeMap::new(),
+            source_breakdown: sources,
+            message_count: 5,
+            turn_count: 5,
+        }];
+        app.data.total_tokens = 1000;
+        app.data.total_cost = 0.05;
+        app.data.clients = vec![ClientUsage {
+            client: "opencode".to_string(),
+            tokens: TokenBreakdown {
+                input: 100,
+                output: 50,
+                cache_read: 800,
+                cache_write: 50,
+                reasoning: 0,
+            },
+            cost: 0.05,
+            message_count: 5,
+            session_count: 1,
+            turn_count: 5,
+            models: BTreeMap::new(),
+            first_active_ms: 0,
+            last_active_ms: 0,
+        }];
+
+        let backend = TestBackend::new(100, 35);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &mut app, Rect::new(0, 0, 100, 35)))
+            .unwrap();
+
+        let body = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>();
+
+        assert!(body.contains("Client Activity & Efficiency"));
+        assert!(body.contains("OpenCode"));
+        assert!(body.contains("84.2%")); // 800 / (100 + 800 + 50) = 800 / 950 = 84.2%
+        assert!(body.contains("Peak:"));
+        assert_eq!(app.hourly_profile_total_lines > 0, true);
+    }
 }

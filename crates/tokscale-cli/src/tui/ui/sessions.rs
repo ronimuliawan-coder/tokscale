@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::widgets::{
-    display_width, format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
+    display_width, format_cost, format_cost_per_million, format_tokens,
     get_compact_client_display_name, prefix_to_width, total_tokens_cell, truncate_text,
     truncate_to_width, viewport_scrollbar_state,
 };
@@ -327,11 +327,10 @@ impl SessionColumn {
             Self::CacheWrite => Cell::from(self.fit(format_tokens(s.tokens.cache_write), ctx))
                 .style(app.theme.metric_cache_write_style()),
             Self::CacheHit => Cell::from(self.fit(
-                format_cache_hit_rate(
+                app.format_cache(
                     s.tokens.cache_read,
                     s.tokens.input,
                     s.tokens.cache_write,
-                    app.glyphs,
                 ),
                 ctx,
             ))

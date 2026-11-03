@@ -133,6 +133,16 @@ pub struct HourlyModelInfo {
     pub color_key: String,
     pub tokens: TokenBreakdown,
     pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct HourlySourceInfo {
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+    pub turn_count: u32,
+    pub models: BTreeMap<String, HourlyModelInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +153,7 @@ pub struct HourlyUsage {
     /// Clients seen, or machine labels for `GroupBy::MachineModel`.
     pub clients: BTreeSet<String>,
     pub models: BTreeMap<String, HourlyModelInfo>,
+    pub source_breakdown: BTreeMap<String, HourlySourceInfo>,
     pub message_count: u32,
     pub turn_count: u32,
 }
@@ -434,6 +445,29 @@ pub struct GraphData {
     pub weeks: Vec<Vec<Option<ContributionDay>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClientModelInfo {
+    pub provider: String,
+    pub display_name: String,
+    pub color_key: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientUsage {
+    pub client: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+    pub session_count: u32,
+    pub turn_count: u32,
+    pub models: BTreeMap<String, ClientModelInfo>,
+    pub first_active_ms: i64,
+    pub last_active_ms: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct UsageData {
     pub models: Vec<ModelUsage>,
@@ -448,6 +482,7 @@ pub struct UsageData {
     /// `parent_session_id`) rolled into their parent session's row.
     /// Recomputed alongside `sessions` on every aggregation.
     pub sessions_rolled: Vec<SessionUsage>,
+    pub clients: Vec<ClientUsage>,
     pub graph: Option<GraphData>,
     pub total_tokens: u64,
     pub undated_tokens: u64,
@@ -814,6 +849,8 @@ impl DataLoader {
         let mut session_map: HashMap<String, SessionUsage> = HashMap::new();
         let mut project_map: HashMap<String, ProjectUsage> = HashMap::new();
         let mut project_session_ids: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut client_map: HashMap<String, ClientUsage> = HashMap::new();
+        let mut client_session_ids: HashMap<String, HashSet<String>> = HashMap::new();
         // Memoizes the filesystem probes that resolve a workspace key to a label.
         let mut workspace_labeler = tokscale_core::WorkspaceLabeler::default();
         // Labels are basenames, so two different directories that share one paint
@@ -1281,6 +1318,7 @@ impl DataLoader {
                     cost: 0.0,
                     clients: BTreeSet::new(),
                     models: BTreeMap::new(),
+                    source_breakdown: BTreeMap::new(),
                     message_count: 0,
                     turn_count: 0,
                 });
@@ -1317,8 +1355,86 @@ impl DataLoader {
                 }
                 hourly_entry.clients.insert(period_source.to_string());
 
+                let source_entry = hourly_entry
+                    .source_breakdown
+                    .entry(msg.client.clone())
+                    .or_insert_with(|| HourlySourceInfo {
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
+                        turn_count: 0,
+                        models: BTreeMap::new(),
+                    });
+
+                source_entry.tokens.input = source_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                source_entry.tokens.output = source_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                source_entry.tokens.cache_read = source_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                source_entry.tokens.cache_write = source_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                source_entry.tokens.reasoning = source_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                source_entry.cost += h_cost;
+                source_entry.message_count += msg.message_count.max(0) as u32;
+                if msg.is_turn_start {
+                    source_entry.turn_count += 1;
+                }
+
                 let hourly_model_key =
                     hourly_model_key(group_by, &msg.provider_id, &normalized_model);
+
+                let s_model = source_entry
+                    .models
+                    .entry(hourly_model_key.clone())
+                    .or_insert_with(|| HourlyModelInfo {
+                        provider: msg.provider_id.clone(),
+                        display_name: hourly_model_display_name(
+                            group_by,
+                            &msg.provider_id,
+                            &normalized_model,
+                        ),
+                        color_key: model_color_key(group_by, &msg.provider_id, &model_key),
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        messages: 0,
+                    });
+                s_model.tokens.input = s_model
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                s_model.tokens.output = s_model
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                s_model.tokens.cache_read = s_model
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                s_model.tokens.cache_write = s_model
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                s_model.tokens.reasoning = s_model
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                s_model.cost += h_cost;
+                s_model.messages = s_model
+                    .messages
+                    .saturating_add(msg.message_count.max(0) as u64);
+
                 let h_model = hourly_entry
                     .models
                     .entry(hourly_model_key)
@@ -1332,6 +1448,7 @@ impl DataLoader {
                         color_key: model_color_key(group_by, &msg.provider_id, &model_key),
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
+                        messages: 0,
                     });
                 h_model.tokens.input = h_model
                     .tokens
@@ -1354,6 +1471,9 @@ impl DataLoader {
                     .reasoning
                     .saturating_add(msg.tokens.reasoning.max(0) as u64);
                 h_model.cost += h_cost;
+                h_model.messages = h_model
+                    .messages
+                    .saturating_add(msg.message_count.max(0) as u64);
             }
 
             // Minute aggregation: same fallback semantics as hourly, but
@@ -1427,6 +1547,7 @@ impl DataLoader {
                             color_key: model_color_key(group_by, &msg.provider_id, &model_key),
                             tokens: TokenBreakdown::default(),
                             cost: 0.0,
+                            messages: 0,
                         });
                 m_model.tokens.input = m_model
                     .tokens
@@ -1594,6 +1715,109 @@ impl DataLoader {
                     }
                 }
             }
+
+            // Client rollup
+            {
+                let client_entry =
+                    client_map
+                        .entry(msg.client.clone())
+                        .or_insert_with(|| ClientUsage {
+                            client: msg.client.clone(),
+                            tokens: TokenBreakdown::default(),
+                            cost: 0.0,
+                            message_count: 0,
+                            session_count: 0,
+                            turn_count: 0,
+                            models: BTreeMap::new(),
+                            first_active_ms: 0,
+                            last_active_ms: 0,
+                        });
+
+                client_entry.tokens.input = client_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                client_entry.tokens.output = client_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                client_entry.tokens.cache_read = client_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                client_entry.tokens.cache_write = client_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                client_entry.tokens.reasoning = client_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                if msg.cost.is_finite() && msg.cost >= 0.0 {
+                    client_entry.cost += msg.cost;
+                }
+                client_entry.message_count = client_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
+                if msg.is_turn_start {
+                    client_entry.turn_count = client_entry.turn_count.saturating_add(1);
+                }
+
+                let ts = message_timestamp_ms(msg);
+                if ts > 0 {
+                    if client_entry.first_active_ms == 0 || ts < client_entry.first_active_ms {
+                        client_entry.first_active_ms = ts;
+                    }
+                    if ts > client_entry.last_active_ms {
+                        client_entry.last_active_ms = ts;
+                    }
+                }
+
+                if !msg.session_id.is_empty() {
+                    let client_sess = client_session_ids.entry(msg.client.clone()).or_default();
+                    if client_sess.insert(msg.session_id.clone()) {
+                        client_entry.session_count += 1;
+                    }
+                }
+
+                let model_entry = client_entry
+                    .models
+                    .entry(normalized_model.clone())
+                    .or_insert_with(|| ClientModelInfo {
+                        provider: msg.provider_id.clone(),
+                        display_name: normalized_model.clone(),
+                        color_key: model_key.clone(),
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
+                    });
+                model_entry.tokens.input = model_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                model_entry.tokens.output = model_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                model_entry.tokens.cache_read = model_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                model_entry.tokens.cache_write = model_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                model_entry.tokens.reasoning = model_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                if msg.cost.is_finite() && msg.cost >= 0.0 {
+                    model_entry.cost += msg.cost;
+                }
+                model_entry.message_count = model_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
+            }
         }
 
         let mut models: Vec<ModelUsage> = model_map
@@ -1732,6 +1956,14 @@ impl DataLoader {
                 .then_with(|| a.group_key.cmp(&b.group_key))
         });
 
+        let mut clients: Vec<ClientUsage> = client_map.into_values().collect();
+        clients.sort_by(|a, b| {
+            b.cost
+                .total_cmp(&a.cost)
+                .then_with(|| b.tokens.total().cmp(&a.tokens.total()))
+                .then_with(|| a.client.cmp(&b.client))
+        });
+
         // Plain `.sum()` panics (debug) / wraps (release) on overflow across
         // many models; a single corrupt/huge bucket must not poison the
         // whole total, so fold with saturating_add like `TokenBreakdown::total`.
@@ -1757,6 +1989,7 @@ impl DataLoader {
             sessions,
             projects,
             sessions_rolled,
+            clients,
             graph: Some(graph),
             total_tokens,
             undated_tokens: messages
@@ -2178,6 +2411,7 @@ mod tests {
             cost: 1.0,
             clients: BTreeSet::new(),
             models: BTreeMap::new(),
+            source_breakdown: BTreeMap::new(),
             message_count: 1,
             turn_count: 1,
         };

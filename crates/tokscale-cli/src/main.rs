@@ -301,6 +301,30 @@ enum Commands {
         )]
         importer: Option<String>,
     },
+    #[command(about = "Export usage analytics to CSV or JSON")]
+    Export {
+        #[arg(long, default_value = "csv", help = "Export format: csv, json")]
+        format: String,
+        #[arg(
+            long,
+            default_value = "daily",
+            help = "Granularity: hourly, daily, monthly, models, clients, sessions"
+        )]
+        granularity: String,
+        #[arg(
+            long,
+            help = "Break down rows by source/client (for hourly, daily, monthly)"
+        )]
+        by_source: bool,
+        #[arg(short, long, help = "Write output to file instead of stdout")]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        clients: ClientFlags,
+        #[command(flatten)]
+        date: DateRangeFlags,
+        #[arg(long, help = "Disable spinner")]
+        no_spinner: bool,
+    },
     #[command(about = "Launch interactive TUI with optional filters")]
     Tui {
         #[command(flatten)]
@@ -928,6 +952,27 @@ fn main() -> Result<()> {
         }) => {
             reject_unsupported_home_override(&cli.home, "import")?;
             run_import_command(file, format, output, dry_run, submit, importer)
+        }
+        Some(Commands::Export {
+            format,
+            granularity,
+            by_source,
+            output,
+            clients,
+            date,
+            no_spinner,
+        }) => {
+            let clients = build_client_filter(clients, &cli.home);
+            run_export_command(ExportOptions {
+                format,
+                granularity,
+                by_source,
+                output,
+                clients,
+                date,
+                no_spinner,
+                home: cli.home,
+            })
         }
         Some(Commands::Tui { clients, date }) => {
             ensure_home_supported_for_tui(&cli.home)?;
@@ -6730,6 +6775,67 @@ fn backfill_payload(
         importer: importer.to_string(),
     });
     payload
+}
+
+struct ExportOptions {
+    format: String,
+    granularity: String,
+    by_source: bool,
+    output: Option<PathBuf>,
+    clients: Option<Vec<String>>,
+    date: DateRangeFlags,
+    no_spinner: bool,
+    home: Option<String>,
+}
+
+fn run_export_command(opts: ExportOptions) -> Result<()> {
+    let mut context = LocalReportContext::new(
+        opts.home,
+        opts.clients.clone(),
+        &opts.date,
+        (!opts.no_spinner).then_some("Scanning session data..."),
+    );
+
+    let enabled_set = if let Some(ref cli_clients) = opts.clients {
+        cli_clients
+            .iter()
+            .filter_map(|s| ClientFilter::from_filter_str(&s.to_lowercase()))
+            .collect()
+    } else {
+        ClientFilter::default_set()
+    };
+    let scan_clients: Vec<tokscale_core::ClientId> = enabled_set
+        .iter()
+        .filter_map(|f| f.to_client_id())
+        .collect();
+    let include_synthetic = enabled_set.contains(&ClientFilter::Synthetic);
+
+    let loader = tui::DataLoader::with_filters(
+        None,
+        context.since.clone(),
+        context.until.clone(),
+        context.year.clone(),
+    );
+    let data = loader.load(
+        &scan_clients,
+        &tokscale_core::GroupBy::default(),
+        include_synthetic,
+    )?;
+
+    context.stop_spinner();
+    emit_cursor_sync_warning(
+        context.cursor_sync_result.as_ref(),
+        context.had_cursor_cache,
+        context.explicit_cursor_filter,
+    );
+
+    commands::export::export_data(
+        &data,
+        &opts.format,
+        &opts.granularity,
+        opts.by_source,
+        opts.output,
+    )
 }
 
 #[derive(serde::Deserialize)]

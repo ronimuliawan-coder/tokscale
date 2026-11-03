@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use tokscale_core::ClientId;
@@ -19,7 +19,7 @@ use super::codex_login::{
     CodexLoginOutcome,
 };
 use super::data::{
-    AgentUsage, DailyUsage, DataLoader, HourlyUsage, MinutelyUsage, ModelDayUsage, ModelUsage,
+    AgentUsage, ClientUsage, DailyUsage, DataLoader, HourlyUsage, MinutelyUsage, ModelDayUsage, ModelUsage,
     MonthlyUsage, ProjectUsage, SessionUsage, TokenBreakdown, UsageData,
 };
 use super::glyph_probe::AmbientWidth;
@@ -64,6 +64,7 @@ pub enum Tab {
     Overview,
     Usage,
     Models,
+    Clients,
     Daily,
     Hourly,
     Minutely,
@@ -80,6 +81,7 @@ impl Tab {
             Tab::Overview,
             Tab::Usage,
             Tab::Models,
+            Tab::Clients,
             Tab::Daily,
             Tab::Hourly,
             Tab::Minutely,
@@ -97,20 +99,26 @@ impl Tab {
     }
 
     pub fn localized_name(&self, lang: TuiLanguage) -> &'static str {
-        let key = match self {
-            Tab::Overview => MessageKey::TabOverview,
-            Tab::Usage => MessageKey::TabUsage,
-            Tab::Models => MessageKey::TabModels,
-            Tab::Daily => MessageKey::TabDaily,
-            Tab::Hourly => MessageKey::TabHourly,
-            Tab::Minutely => MessageKey::TabMinutely,
-            Tab::Monthly => MessageKey::TabMonthly,
-            Tab::Sessions => MessageKey::TabSessions,
-            Tab::Projects => MessageKey::TabProjects,
-            Tab::Stats => MessageKey::TabStats,
-            Tab::Agents => MessageKey::TabAgents,
-        };
-        tr(lang, key)
+        match self {
+            Tab::Clients => "Clients",
+            _ => {
+                let key = match self {
+                    Tab::Overview => MessageKey::TabOverview,
+                    Tab::Usage => MessageKey::TabUsage,
+                    Tab::Models => MessageKey::TabModels,
+                    Tab::Daily => MessageKey::TabDaily,
+                    Tab::Hourly => MessageKey::TabHourly,
+                    Tab::Minutely => MessageKey::TabMinutely,
+                    Tab::Monthly => MessageKey::TabMonthly,
+                    Tab::Sessions => MessageKey::TabSessions,
+                    Tab::Projects => MessageKey::TabProjects,
+                    Tab::Stats => MessageKey::TabStats,
+                    Tab::Agents => MessageKey::TabAgents,
+                    Tab::Clients => unreachable!(),
+                };
+                tr(lang, key)
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -119,27 +127,34 @@ impl Tab {
     }
 
     pub fn localized_short_name(&self, lang: TuiLanguage) -> &'static str {
-        let key = match self {
-            Tab::Overview => MessageKey::TabOverviewShort,
-            Tab::Usage => MessageKey::TabUsageShort,
-            Tab::Models => MessageKey::TabModelsShort,
-            Tab::Daily => MessageKey::TabDailyShort,
-            Tab::Hourly => MessageKey::TabHourlyShort,
-            Tab::Minutely => MessageKey::TabMinutelyShort,
-            Tab::Monthly => MessageKey::TabMonthlyShort,
-            Tab::Sessions => MessageKey::TabSessionsShort,
-            Tab::Projects => MessageKey::TabProjectsShort,
-            Tab::Stats => MessageKey::TabStatsShort,
-            Tab::Agents => MessageKey::TabAgentsShort,
-        };
-        tr(lang, key)
+        match self {
+            Tab::Clients => "Cli",
+            _ => {
+                let key = match self {
+                    Tab::Overview => MessageKey::TabOverviewShort,
+                    Tab::Usage => MessageKey::TabUsageShort,
+                    Tab::Models => MessageKey::TabModelsShort,
+                    Tab::Daily => MessageKey::TabDailyShort,
+                    Tab::Hourly => MessageKey::TabHourlyShort,
+                    Tab::Minutely => MessageKey::TabMinutelyShort,
+                    Tab::Monthly => MessageKey::TabMonthlyShort,
+                    Tab::Sessions => MessageKey::TabSessionsShort,
+                    Tab::Projects => MessageKey::TabProjectsShort,
+                    Tab::Stats => MessageKey::TabStatsShort,
+                    Tab::Agents => MessageKey::TabAgentsShort,
+                    Tab::Clients => unreachable!(),
+                };
+                tr(lang, key)
+            }
+        }
     }
 
     pub fn next(self) -> Tab {
         match self {
             Tab::Overview => Tab::Usage,
             Tab::Usage => Tab::Models,
-            Tab::Models => Tab::Daily,
+            Tab::Models => Tab::Clients,
+            Tab::Clients => Tab::Daily,
             Tab::Daily => Tab::Hourly,
             Tab::Hourly => Tab::Minutely,
             Tab::Minutely => Tab::Monthly,
@@ -156,7 +171,8 @@ impl Tab {
             Tab::Overview => Tab::Agents,
             Tab::Usage => Tab::Overview,
             Tab::Models => Tab::Usage,
-            Tab::Daily => Tab::Models,
+            Tab::Clients => Tab::Models,
+            Tab::Daily => Tab::Clients,
             Tab::Hourly => Tab::Daily,
             Tab::Minutely => Tab::Hourly,
             Tab::Monthly => Tab::Minutely,
@@ -210,6 +226,133 @@ pub struct DailyDetailRow<'a> {
     pub cost: f64,
     pub messages: u64,
     pub ms_per_1k_tokens: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HourlyDetailRow<'a> {
+    pub source: &'a str,
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub color_key: &'a str,
+    pub tokens: &'a TokenBreakdown,
+    pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ClientDetailRow<'a> {
+    pub model: &'a str,
+    pub provider: &'a str,
+    pub color_key: &'a str,
+    pub tokens: &'a TokenBreakdown,
+    pub cost: f64,
+    pub messages: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct HourlyDisplayRow<'a> {
+    pub hour: &'a HourlyUsage,
+    pub datetime: NaiveDateTime,
+    pub source: Option<&'a str>,
+    pub tokens: &'a TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+    pub turn_count: u32,
+    pub is_continuation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelDetailViewType {
+    Daily,
+    Hourly,
+    Clients,
+    Sessions,
+    Monthly,
+}
+
+impl ModelDetailViewType {
+    pub const ALL: [ModelDetailViewType; 5] = [
+        ModelDetailViewType::Daily,
+        ModelDetailViewType::Hourly,
+        ModelDetailViewType::Clients,
+        ModelDetailViewType::Sessions,
+        ModelDetailViewType::Monthly,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "Daily Usage",
+            Self::Hourly => "Hourly Usage",
+            Self::Clients => "Clients / Sources",
+            Self::Sessions => "Sessions",
+            Self::Monthly => "Monthly Usage",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Daily => "Day-by-day token consumption, cost, and cache rates",
+            Self::Hourly => "Hour-by-hour usage history with source attribution",
+            Self::Clients => "Breakdown of AI clients/IDEs that used this model",
+            Self::Sessions => "Conversation sessions that invoked this model",
+            Self::Monthly => "Month-by-month token and spend rollup",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelDetailState {
+    pub model_name: String,
+    pub provider: String,
+    pub color_key: String,
+    pub active_view: Option<ModelDetailViewType>,
+    pub menu_cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelDailyRow {
+    pub date: chrono::NaiveDate,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelHourlyRow {
+    pub datetime: chrono::NaiveDateTime,
+    pub source: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelClientRow {
+    pub client: String,
+    pub display_name: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub messages: u64,
+    pub token_share: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelSessionRow {
+    pub session_id: String,
+    pub client: String,
+    pub title: Option<String>,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub messages: u32,
+    pub last_active_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelMonthlyRow {
+    pub month: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub messages: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -351,14 +494,25 @@ pub struct App {
     monthly_list_selected_index: usize,
     monthly_list_scroll_offset: usize,
 
+    pub selected_hourly_detail_dt: Option<NaiveDateTime>,
+    hourly_list_selected_index: usize,
+    hourly_list_scroll_offset: usize,
+    pub hourly_split_sources: bool,
+
+    pub selected_client_detail: Option<String>,
+    client_list_selected_index: usize,
+    client_list_scroll_offset: usize,
+    pub model_detail: Option<ModelDetailState>,
     /// `ModelUsage::group_key` of the Models row whose daily trend is open.
     pub selected_model_trend: Option<String>,
     models_list_selected_index: usize,
     models_list_scroll_offset: usize,
     models_list_sort: (SortField, SortDirection),
+    pub cache_display_percent: bool,
 
     pub selected_graph_cell: Option<(usize, usize)>,
     pub stats_breakdown_total_lines: usize,
+    pub hourly_profile_total_lines: usize,
 
     pub auto_refresh: bool,
     pub auto_refresh_interval: Duration,
@@ -539,12 +693,22 @@ impl App {
             selected_monthly_detail_month: None,
             monthly_list_selected_index: 0,
             monthly_list_scroll_offset: 0,
+            selected_hourly_detail_dt: None,
+            hourly_list_selected_index: 0,
+            hourly_list_scroll_offset: 0,
+            hourly_split_sources: true,
+            selected_client_detail: None,
+            client_list_selected_index: 0,
+            client_list_scroll_offset: 0,
+            model_detail: None,
             selected_model_trend: None,
             models_list_selected_index: 0,
             models_list_scroll_offset: 0,
             models_list_sort: (SortField::Cost, SortDirection::Descending),
+            cache_display_percent: false,
             selected_graph_cell: None,
             stats_breakdown_total_lines: 0,
+            hourly_profile_total_lines: 0,
             auto_refresh,
             auto_refresh_interval,
             last_auto_refresh: Instant::now(),
@@ -653,6 +817,15 @@ impl App {
                 self.selected_monthly_detail_month = None;
                 self.selected_index = self.monthly_list_selected_index;
                 self.scroll_offset = self.monthly_list_scroll_offset;
+            }
+        }
+
+        // Same for Hourly-detail mode: exit if the hour disappeared.
+        if let Some(dt) = self.selected_hourly_detail_dt {
+            if !self.data.hourly.iter().any(|h| h.datetime == dt) {
+                self.selected_hourly_detail_dt = None;
+                self.selected_index = self.hourly_list_selected_index;
+                self.scroll_offset = self.hourly_list_scroll_offset;
             }
         }
 
@@ -915,6 +1088,75 @@ impl App {
             return false;
         }
 
+        if self.current_tab == Tab::Models && self.is_model_detail_menu_active() {
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        if s.menu_cursor > 0 {
+                            s.menu_cursor -= 1;
+                        } else {
+                            s.menu_cursor = ModelDetailViewType::ALL.len() - 1;
+                        }
+                    }
+                    return false;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        if s.menu_cursor + 1 < ModelDetailViewType::ALL.len() {
+                            s.menu_cursor += 1;
+                        } else {
+                            s.menu_cursor = 0;
+                        }
+                    }
+                    return false;
+                }
+                KeyCode::Char('1') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        s.menu_cursor = 0;
+                    }
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Char('2') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        s.menu_cursor = 1;
+                    }
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Char('3') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        s.menu_cursor = 2;
+                    }
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Char('4') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        s.menu_cursor = 3;
+                    }
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Char('5') => {
+                    if let Some(ref mut s) = self.model_detail {
+                        s.menu_cursor = 4;
+                    }
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Enter => {
+                    self.select_model_detail_view();
+                    return false;
+                }
+                KeyCode::Esc | KeyCode::Backspace => {
+                    self.close_model_detail();
+                    return false;
+                }
+                _ => {}
+            }
+        }
+
         match code {
             KeyCode::Char('q') => {
                 self.apply_pending_language_change();
@@ -1016,11 +1258,19 @@ impl App {
                     ChartGranularity::Hourly => ChartGranularity::Daily,
                 };
             }
-            KeyCode::Char('v') if self.current_tab == Tab::Hourly => {
+            KeyCode::Char('v')
+                if self.current_tab == Tab::Hourly && !self.is_hourly_detail_active() =>
+            {
                 self.hourly_view_mode = match self.hourly_view_mode {
                     HourlyViewMode::Table => HourlyViewMode::Profile,
                     HourlyViewMode::Profile => HourlyViewMode::Table,
                 };
+                self.reset_selection();
+            }
+            KeyCode::Char('m')
+                if self.current_tab == Tab::Hourly && !self.is_hourly_detail_active() =>
+            {
+                self.hourly_split_sources = !self.hourly_split_sources;
                 self.reset_selection();
             }
             KeyCode::Char('g') => {
@@ -1073,14 +1323,44 @@ impl App {
             KeyCode::Char('x') if self.current_tab == Tab::Usage => {
                 self.confirm_selected_codex_rate_limit_reset();
             }
+            KeyCode::Char('%') => {
+                self.cache_display_percent = !self.cache_display_percent;
+                let mode = if self.cache_display_percent {
+                    "Percentage"
+                } else {
+                    "Multiplier"
+                };
+                self.set_status(&format!("Cache display: {}", mode));
+            }
+            KeyCode::Enter if self.current_tab == Tab::Models => {
+                if self.is_model_detail_menu_active() {
+                    self.select_model_detail_view();
+                } else if !self.is_model_detail_active() {
+                    self.open_selected_model_trend();
+                }
+            }
+            KeyCode::Char('i') | KeyCode::Char('I') | KeyCode::Char('o') | KeyCode::Char('O')
+                if self.current_tab == Tab::Models =>
+            {
+                if !self.is_model_detail_active() {
+                    self.open_selected_model_detail_menu();
+                }
+            }
+            KeyCode::Enter
+                if self.current_tab == Tab::Clients && !self.is_client_detail_active() =>
+            {
+                self.open_selected_client_detail();
+            }
             KeyCode::Enter if self.current_tab == Tab::Daily => {
                 self.open_selected_daily_detail();
             }
+            KeyCode::Enter
+                if self.current_tab == Tab::Hourly && !self.is_hourly_detail_active() =>
+            {
+                self.open_selected_hourly_detail();
+            }
             KeyCode::Enter if self.current_tab == Tab::Monthly => {
                 self.open_selected_monthly_detail();
-            }
-            KeyCode::Enter if self.current_tab == Tab::Models => {
-                self.open_selected_model_trend();
             }
             KeyCode::Enter if self.current_tab == Tab::Sessions => {
                 self.open_selected_session_detail();
@@ -1092,9 +1372,24 @@ impl App {
                 self.handle_graph_selection();
             }
             KeyCode::Esc | KeyCode::Backspace
+                if self.current_tab == Tab::Models && self.is_model_detail_active() =>
+            {
+                self.close_model_detail();
+            }
+            KeyCode::Esc | KeyCode::Backspace
+                if self.current_tab == Tab::Clients && self.is_client_detail_active() =>
+            {
+                self.close_client_detail();
+            }
+            KeyCode::Esc | KeyCode::Backspace
                 if self.current_tab == Tab::Daily && self.is_daily_detail_active() =>
             {
                 self.close_daily_detail();
+            }
+            KeyCode::Esc | KeyCode::Backspace
+                if self.current_tab == Tab::Hourly && self.is_hourly_detail_active() =>
+            {
+                self.close_hourly_detail();
             }
             KeyCode::Esc | KeyCode::Backspace
                 if self.current_tab == Tab::Monthly && self.is_monthly_detail_active() =>
@@ -1783,14 +2078,22 @@ impl App {
         self.selected_daily_detail_date = None;
         self.daily_list_selected_index = 0;
         self.daily_list_scroll_offset = 0;
+        self.selected_hourly_detail_dt = None;
+        self.hourly_list_selected_index = 0;
+        self.hourly_list_scroll_offset = 0;
         self.selected_monthly_detail_month = None;
         self.monthly_list_selected_index = 0;
         self.monthly_list_scroll_offset = 0;
         self.selected_model_trend = None;
+        self.selected_client_detail = None;
+        self.client_list_selected_index = 0;
+        self.client_list_scroll_offset = 0;
+        self.model_detail = None;
         self.models_list_selected_index = 0;
         self.models_list_scroll_offset = 0;
         self.selected_graph_cell = None;
         self.stats_breakdown_total_lines = 0;
+        self.hourly_profile_total_lines = 0;
     }
 
     fn switch_tab(&mut self, target: Tab) {
@@ -1807,11 +2110,18 @@ impl App {
         if target != Tab::Daily {
             self.selected_daily_detail_date = None;
         }
+        if target != Tab::Hourly {
+            self.selected_hourly_detail_dt = None;
+        }
         if target != Tab::Monthly {
             self.selected_monthly_detail_month = None;
         }
+        if target != Tab::Clients {
+            self.selected_client_detail = None;
+        }
         if target != Tab::Models {
             self.selected_model_trend = None;
+            self.model_detail = None;
         }
 
         let (field, dir) = self
@@ -1983,13 +2293,29 @@ impl App {
     fn get_current_list_len(&self) -> usize {
         match self.current_tab {
             Tab::Models if self.is_model_trend_active() => self.get_sorted_model_trend_rows().len(),
+            Tab::Overview | Tab::Models if self.is_model_detail_view_active() => {
+                self.get_sorted_model_detail_rows_count()
+            }
+            Tab::Overview | Tab::Models if self.is_model_detail_menu_active() => {
+                ModelDetailViewType::ALL.len()
+            }
             Tab::Overview | Tab::Models => self.data.models.len(),
             Tab::Agents => self.data.agents.len(),
+            Tab::Clients if self.is_client_detail_active() => {
+                self.get_sorted_client_detail_rows().len()
+            }
+            Tab::Clients => self.data.clients.len(),
             Tab::Daily if self.is_daily_detail_active() => {
                 self.get_sorted_daily_detail_rows().len()
             }
             Tab::Daily => self.data.daily.len(),
-            Tab::Hourly => self.data.hourly.len(),
+            Tab::Hourly if self.is_hourly_detail_active() => {
+                self.get_sorted_hourly_detail_rows().len()
+            }
+            Tab::Hourly if self.hourly_view_mode == HourlyViewMode::Profile => {
+                self.hourly_profile_total_lines
+            }
+            Tab::Hourly => self.get_sorted_hourly_rows().len(),
             Tab::Minutely => self.data.minutely.len(),
             Tab::Monthly if self.is_monthly_detail_active() => {
                 self.get_sorted_monthly_detail_days().len()
@@ -2026,6 +2352,8 @@ impl App {
         if (self.current_tab == Tab::Daily && self.is_daily_detail_active())
             || (self.current_tab == Tab::Monthly && self.is_monthly_detail_active())
             || (self.current_tab == Tab::Models && self.is_model_trend_active())
+            || (self.current_tab == Tab::Hourly && self.is_hourly_detail_active())
+            || (self.current_tab == Tab::Clients && self.is_client_detail_active())
         {
             self.selected_index = 0;
             self.scroll_offset = 0;
@@ -2212,6 +2540,58 @@ impl App {
         };
 
         self.set_status("Returned to daily usage");
+        self.clamp_selection();
+    }
+
+    pub(crate) fn open_selected_hourly_detail(&mut self) {
+        if self.is_hourly_detail_active() {
+            return;
+        }
+
+        let selected_dt = {
+            let hourly_rows = self.get_sorted_hourly_rows();
+            hourly_rows.get(self.selected_index).map(|r| r.datetime)
+        };
+
+        if let Some(dt) = selected_dt {
+            self.hourly_list_selected_index = self.selected_index;
+            self.hourly_list_scroll_offset = self.scroll_offset;
+            self.selected_hourly_detail_dt = Some(dt);
+            self.selected_index = 0;
+            self.scroll_offset = 0;
+            self.set_status(&format!(
+                "Viewing hourly details for {}",
+                dt.format("%Y-%m-%d %H:00")
+            ));
+            self.clamp_selection();
+        }
+    }
+
+    pub(crate) fn close_hourly_detail(&mut self) {
+        let Some(detail_dt) = self.selected_hourly_detail_dt else {
+            return;
+        };
+
+        self.selected_hourly_detail_dt = None;
+
+        let restored_index = self
+            .get_sorted_hourly_rows()
+            .iter()
+            .position(|r| r.datetime == detail_dt)
+            .unwrap_or(self.hourly_list_selected_index);
+
+        self.selected_index = restored_index;
+
+        let max_visible = self.max_visible_items.max(1);
+        let viewport_still_holds = restored_index >= self.hourly_list_scroll_offset
+            && restored_index < self.hourly_list_scroll_offset + max_visible;
+        self.scroll_offset = if viewport_still_holds {
+            self.hourly_list_scroll_offset
+        } else {
+            restored_index.saturating_sub(max_visible / 2)
+        };
+
+        self.set_status("Returned to hourly usage");
         self.clamp_selection();
     }
 
@@ -2421,14 +2801,39 @@ impl App {
                 .get_sorted_daily()
                 .get(self.selected_index)
                 .map(|d| format!("{}: {} tokens, ${:.4}", d.date, d.tokens.total(), d.cost)),
-            Tab::Hourly => self.get_sorted_hourly().get(self.selected_index).map(|h| {
-                format!(
-                    "{}: {} tokens, ${:.4}",
-                    h.datetime.format("%Y-%m-%d %H:%M"),
-                    h.tokens.total(),
-                    h.cost
-                )
-            }),
+            Tab::Hourly if self.is_hourly_detail_active() => self
+                .get_sorted_hourly_detail_rows()
+                .get(self.selected_index)
+                .map(|row| {
+                    format!(
+                        "{} / {}: {} tokens, ${:.4}",
+                        row.source,
+                        row.model,
+                        row.tokens.total(),
+                        row.cost
+                    )
+                }),
+            Tab::Hourly => self
+                .get_sorted_hourly_rows()
+                .get(self.selected_index)
+                .map(|r| {
+                    if let Some(src) = r.source {
+                        format!(
+                            "{}: {} / {} tokens, ${:.4}",
+                            r.datetime.format("%Y-%m-%d %H:%M"),
+                            src,
+                            r.tokens.total(),
+                            r.cost
+                        )
+                    } else {
+                        format!(
+                            "{}: {} tokens, ${:.4}",
+                            r.datetime.format("%Y-%m-%d %H:%M"),
+                            r.tokens.total(),
+                            r.cost
+                        )
+                    }
+                }),
             Tab::Minutely => self
                 .get_sorted_minutely()
                 .get(self.selected_index)
@@ -2470,6 +2875,22 @@ impl App {
                 .get_sorted_projects()
                 .get(self.selected_index)
                 .map(|p| format!("{}: {} tokens, ${:.4}", p.label, p.tokens.total(), p.cost)),
+            Tab::Clients if self.is_client_detail_active() => self
+                .get_sorted_client_detail_rows()
+                .get(self.selected_index)
+                .map(|row| {
+                    format!(
+                        "{} / {}: {} tokens, ${:.4}",
+                        self.selected_client_detail.as_deref().unwrap_or(""),
+                        row.model,
+                        row.tokens.total(),
+                        row.cost
+                    )
+                }),
+            Tab::Clients => self
+                .get_sorted_clients()
+                .get(self.selected_index)
+                .map(|c| format!("{}: {} tokens, ${:.4}", c.client, c.tokens.total(), c.cost)),
         };
 
         if let Some(text) = text {
@@ -2754,6 +3175,7 @@ impl App {
         rows
     }
 
+    #[allow(dead_code)]
     pub fn get_sorted_hourly(&self) -> Vec<&HourlyUsage> {
         let mut hourly: Vec<&HourlyUsage> = self.data.hourly.iter().collect();
 
@@ -2787,6 +3209,752 @@ impl App {
         }
 
         hourly
+    }
+
+    pub fn is_hourly_detail_active(&self) -> bool {
+        self.selected_hourly_detail_dt.is_some()
+    }
+
+    pub fn hourly_detail_dt(&self) -> Option<NaiveDateTime> {
+        self.selected_hourly_detail_dt
+    }
+
+    pub fn get_sorted_hourly_detail_rows(&self) -> Vec<HourlyDetailRow<'_>> {
+        let Some(dt) = self.selected_hourly_detail_dt else {
+            return Vec::new();
+        };
+        let Some(hour) = self.data.hourly.iter().find(|h| h.datetime == dt) else {
+            return Vec::new();
+        };
+
+        let mut rows: Vec<HourlyDetailRow<'_>> = if !hour.source_breakdown.is_empty() {
+            hour.source_breakdown
+                .iter()
+                .flat_map(|(source, source_info)| {
+                    source_info
+                        .models
+                        .values()
+                        .map(move |model_info| HourlyDetailRow {
+                            source,
+                            provider: &model_info.provider,
+                            model: &model_info.display_name,
+                            color_key: &model_info.color_key,
+                            tokens: &model_info.tokens,
+                            cost: model_info.cost,
+                            messages: model_info.messages,
+                        })
+                })
+                .collect()
+        } else {
+            let client_str = hour
+                .clients
+                .iter()
+                .next()
+                .map(|s| s.as_str())
+                .unwrap_or("unknown");
+            hour.models
+                .values()
+                .map(|model_info| HourlyDetailRow {
+                    source: client_str,
+                    provider: &model_info.provider,
+                    model: &model_info.display_name,
+                    color_key: &model_info.color_key,
+                    tokens: &model_info.tokens,
+                    cost: model_info.cost,
+                    messages: model_info.messages,
+                })
+                .collect()
+        };
+
+        let tie_breaker = |a: &HourlyDetailRow<'_>, b: &HourlyDetailRow<'_>| {
+            a.source
+                .cmp(b.source)
+                .then_with(|| a.model.cmp(b.model))
+                .then_with(|| a.provider.cmp(b.provider))
+        };
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Date, _) => rows.sort_by(tie_breaker),
+        }
+
+        rows
+    }
+
+    pub fn get_sorted_hourly_rows(&self) -> Vec<HourlyDisplayRow<'_>> {
+        let mut rows: Vec<HourlyDisplayRow<'_>> = Vec::new();
+
+        if self.hourly_split_sources {
+            for hour in &self.data.hourly {
+                if !hour.source_breakdown.is_empty() {
+                    for (source, source_info) in &hour.source_breakdown {
+                        rows.push(HourlyDisplayRow {
+                            hour,
+                            datetime: hour.datetime,
+                            source: Some(source.as_str()),
+                            tokens: &source_info.tokens,
+                            cost: source_info.cost,
+                            message_count: source_info.message_count,
+                            turn_count: source_info.turn_count,
+                            is_continuation: false,
+                        });
+                    }
+                } else {
+                    rows.push(HourlyDisplayRow {
+                        hour,
+                        datetime: hour.datetime,
+                        source: None,
+                        tokens: &hour.tokens,
+                        cost: hour.cost,
+                        message_count: hour.message_count,
+                        turn_count: hour.turn_count,
+                        is_continuation: false,
+                    });
+                }
+            }
+        } else {
+            for hour in &self.data.hourly {
+                rows.push(HourlyDisplayRow {
+                    hour,
+                    datetime: hour.datetime,
+                    source: None,
+                    tokens: &hour.tokens,
+                    cost: hour.cost,
+                    message_count: hour.message_count,
+                    turn_count: hour.turn_count,
+                    is_continuation: false,
+                });
+            }
+        }
+
+        let tie_breaker = |a: &HourlyDisplayRow<'_>, b: &HourlyDisplayRow<'_>| {
+            b.datetime
+                .cmp(&a.datetime)
+                .then_with(|| a.source.cmp(&b.source))
+        };
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Date, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.datetime
+                    .cmp(&a.datetime)
+                    .then_with(|| b.cost.total_cmp(&a.cost))
+                    .then_with(|| a.source.cmp(&b.source))
+            }),
+            (SortField::Date, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.datetime
+                    .cmp(&b.datetime)
+                    .then_with(|| b.cost.total_cmp(&a.cost))
+                    .then_with(|| a.source.cmp(&b.source))
+            }),
+        }
+
+        // Mark continuations if sorted by Date
+        if self.sort_field == SortField::Date {
+            let mut prev_dt: Option<NaiveDateTime> = None;
+            for row in &mut rows {
+                if prev_dt == Some(row.datetime) {
+                    row.is_continuation = true;
+                } else {
+                    row.is_continuation = false;
+                    prev_dt = Some(row.datetime);
+                }
+            }
+        }
+
+        rows
+    }
+
+    pub fn cache_hit_header(&self) -> &'static str {
+        if self.cache_display_percent {
+            "Cache %"
+        } else {
+            "Cache✕"
+        }
+    }
+
+    pub fn format_cache(&self, cache_read: u64, input: u64, cache_write: u64) -> String {
+        super::ui::widgets::format_cache_hit(
+            cache_read,
+            input,
+            cache_write,
+            self.cache_display_percent,
+            self.glyphs,
+        )
+    }
+
+    pub fn get_sorted_clients(&self) -> Vec<&ClientUsage> {
+        let mut clients: Vec<&ClientUsage> = self.data.clients.iter().collect();
+        let tie_breaker = |a: &ClientUsage, b: &ClientUsage| {
+            b.cost
+                .total_cmp(&a.cost)
+                .then_with(|| b.tokens.total().cmp(&a.tokens.total()))
+                .then_with(|| a.client.cmp(&b.client))
+        };
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                clients.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                clients.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => clients.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => clients.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Date, SortDirection::Descending) => clients.sort_by(|a, b| {
+                b.last_active_ms
+                    .cmp(&a.last_active_ms)
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Date, SortDirection::Ascending) => clients.sort_by(|a, b| {
+                a.first_active_ms
+                    .cmp(&b.first_active_ms)
+                    .then_with(|| tie_breaker(a, b))
+            }),
+        }
+        clients
+    }
+
+    pub fn is_client_detail_active(&self) -> bool {
+        self.selected_client_detail.is_some()
+    }
+
+    pub fn client_detail_name(&self) -> Option<&str> {
+        self.selected_client_detail.as_deref()
+    }
+
+    pub fn get_sorted_client_detail_rows(&self) -> Vec<ClientDetailRow<'_>> {
+        let Some(ref client_name) = self.selected_client_detail else {
+            return Vec::new();
+        };
+        let Some(client) = self.data.clients.iter().find(|c| &c.client == client_name) else {
+            return Vec::new();
+        };
+
+        let mut rows: Vec<ClientDetailRow<'_>> = client
+            .models
+            .values()
+            .map(|model_info| ClientDetailRow {
+                model: &model_info.display_name,
+                provider: &model_info.provider,
+                color_key: &model_info.color_key,
+                tokens: &model_info.tokens,
+                cost: model_info.cost,
+                messages: model_info.message_count,
+            })
+            .collect();
+
+        let tie_breaker = |a: &ClientDetailRow<'_>, b: &ClientDetailRow<'_>| {
+            b.cost
+                .total_cmp(&a.cost)
+                .then_with(|| b.tokens.total().cmp(&a.tokens.total()))
+                .then_with(|| a.model.cmp(b.model))
+        };
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| tie_breaker(a, b)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| tie_breaker(a, b))
+            }),
+            (SortField::Date, _) => {
+                rows.sort_by(|a, b| tie_breaker(a, b));
+            }
+        }
+
+        rows
+    }
+
+    pub(crate) fn open_selected_client_detail(&mut self) {
+        if self.current_tab != Tab::Clients || self.is_client_detail_active() {
+            return;
+        }
+
+        let selected_client = {
+            let clients = self.get_sorted_clients();
+            clients.get(self.selected_index).map(|c| c.client.clone())
+        };
+
+        if let Some(client_name) = selected_client {
+            self.client_list_selected_index = self.selected_index;
+            self.client_list_scroll_offset = self.scroll_offset;
+            self.selected_client_detail = Some(client_name.clone());
+            self.selected_index = 0;
+            self.scroll_offset = 0;
+            self.set_status(&format!("Viewing models for client {}", client_name));
+            self.clamp_selection();
+        }
+    }
+
+    pub(crate) fn close_client_detail(&mut self) {
+        let Some(client_name) = self.selected_client_detail.take() else {
+            return;
+        };
+
+        let restored_index = self
+            .get_sorted_clients()
+            .iter()
+            .position(|c| c.client == client_name)
+            .unwrap_or(self.client_list_selected_index);
+
+        self.selected_index = restored_index;
+
+        let max_visible = self.max_visible_items.max(1);
+        let viewport_still_holds = restored_index >= self.client_list_scroll_offset
+            && restored_index < self.client_list_scroll_offset + max_visible;
+        self.scroll_offset = if viewport_still_holds {
+            self.client_list_scroll_offset
+        } else {
+            restored_index.saturating_sub(max_visible / 2)
+        };
+
+        self.clamp_selection();
+    }
+
+    pub fn is_model_detail_active(&self) -> bool {
+        self.model_detail.is_some()
+    }
+
+    pub fn is_model_detail_menu_active(&self) -> bool {
+        self.model_detail
+            .as_ref()
+            .is_some_and(|s| s.active_view.is_none())
+    }
+
+    pub fn is_model_detail_view_active(&self) -> bool {
+        self.model_detail
+            .as_ref()
+            .is_some_and(|s| s.active_view.is_some())
+    }
+
+    pub(crate) fn open_selected_model_detail_menu(&mut self) {
+        if self.current_tab != Tab::Models || self.is_model_detail_active() {
+            return;
+        }
+
+        let selected = {
+            let sorted = self.get_sorted_models();
+            sorted
+                .get(self.selected_index)
+                .map(|m| (m.model.clone(), m.provider.clone(), m.color_key.clone()))
+        };
+
+        if let Some((model_name, provider, color_key)) = selected {
+            self.models_list_selected_index = self.selected_index;
+            self.models_list_scroll_offset = self.scroll_offset;
+            self.model_detail = Some(ModelDetailState {
+                model_name: model_name.clone(),
+                provider,
+                color_key,
+                active_view: None,
+                menu_cursor: 0,
+            });
+            self.set_status(&format!("Select details for {}", model_name));
+        }
+    }
+
+    pub(crate) fn select_model_detail_view(&mut self) {
+        let Some(ref mut state) = self.model_detail else {
+            return;
+        };
+        if state.active_view.is_some() {
+            return;
+        }
+        let chosen = ModelDetailViewType::ALL[state.menu_cursor % ModelDetailViewType::ALL.len()];
+        let model_name = state.model_name.clone();
+        state.active_view = Some(chosen);
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        self.set_status(&format!("Viewing {} for {}", chosen.as_str(), model_name));
+        self.clamp_selection();
+    }
+
+    pub(crate) fn close_model_detail(&mut self) {
+        let Some(ref mut state) = self.model_detail else {
+            return;
+        };
+        if state.active_view.is_some() {
+            state.active_view = None;
+            self.selected_index = 0;
+            self.scroll_offset = 0;
+            let name = state.model_name.clone();
+            self.set_status(&format!("Select details for {}", name));
+        } else {
+            self.model_detail = None;
+            self.selected_index = self.models_list_selected_index;
+            self.scroll_offset = self.models_list_scroll_offset;
+            self.clamp_selection();
+        }
+    }
+
+    pub fn get_sorted_model_detail_rows_count(&self) -> usize {
+        let Some(ref state) = self.model_detail else {
+            return 0;
+        };
+        match state.active_view {
+            Some(ModelDetailViewType::Daily) => self.get_model_daily_rows(&state.model_name).len(),
+            Some(ModelDetailViewType::Hourly) => {
+                self.get_model_hourly_rows(&state.model_name).len()
+            }
+            Some(ModelDetailViewType::Clients) => {
+                self.get_model_client_rows(&state.model_name).len()
+            }
+            Some(ModelDetailViewType::Sessions) => {
+                self.get_model_session_rows(&state.model_name).len()
+            }
+            Some(ModelDetailViewType::Monthly) => {
+                self.get_model_monthly_rows(&state.model_name).len()
+            }
+            None => 0,
+        }
+    }
+
+    pub fn get_model_daily_rows(&self, model: &str) -> Vec<ModelDailyRow> {
+        let mut rows = Vec::new();
+        for day in &self.data.daily {
+            let mut day_tokens = TokenBreakdown::default();
+            let mut day_cost = 0.0;
+            let mut day_msgs = 0u64;
+            let mut found = false;
+
+            for source in day.source_breakdown.values() {
+                if let Some(m_info) = source.models.get(model) {
+                    day_tokens.input = day_tokens.input.saturating_add(m_info.tokens.input);
+                    day_tokens.output = day_tokens.output.saturating_add(m_info.tokens.output);
+                    day_tokens.cache_read = day_tokens
+                        .cache_read
+                        .saturating_add(m_info.tokens.cache_read);
+                    day_tokens.cache_write = day_tokens
+                        .cache_write
+                        .saturating_add(m_info.tokens.cache_write);
+                    day_tokens.reasoning =
+                        day_tokens.reasoning.saturating_add(m_info.tokens.reasoning);
+                    day_cost += m_info.cost;
+                    day_msgs = day_msgs.saturating_add(m_info.messages);
+                    found = true;
+                }
+            }
+
+            if found {
+                rows.push(ModelDailyRow {
+                    date: day.date,
+                    tokens: day_tokens,
+                    cost: day_cost,
+                    messages: day_msgs,
+                });
+            }
+        }
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| b.date.cmp(&a.date)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.date.cmp(&b.date)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.date.cmp(&a.date))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.date.cmp(&b.date))
+            }),
+            (SortField::Date, SortDirection::Ascending) => rows.sort_by_key(|a| a.date),
+            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.date)),
+        }
+
+        rows
+    }
+
+    pub fn get_model_hourly_rows(&self, model: &str) -> Vec<ModelHourlyRow> {
+        let mut rows = Vec::new();
+        for hour in &self.data.hourly {
+            for (src_name, src_info) in &hour.source_breakdown {
+                if let Some(m_info) = src_info.models.get(model) {
+                    rows.push(ModelHourlyRow {
+                        datetime: hour.datetime,
+                        source: src_name.clone(),
+                        tokens: m_info.tokens.clone(),
+                        cost: m_info.cost,
+                        messages: m_info.messages,
+                    });
+                }
+            }
+            if hour.source_breakdown.is_empty() {
+                if let Some(m_info) = hour.models.get(model) {
+                    let src = hour.clients.iter().cloned().collect::<Vec<_>>().join(", ");
+                    rows.push(ModelHourlyRow {
+                        datetime: hour.datetime,
+                        source: if src.is_empty() {
+                            "—".to_string()
+                        } else {
+                            src
+                        },
+                        tokens: m_info.tokens.clone(),
+                        cost: m_info.cost,
+                        messages: m_info.messages,
+                    });
+                }
+            }
+        }
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| b.datetime.cmp(&a.datetime))
+            }),
+            (SortField::Cost, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.cost
+                    .total_cmp(&b.cost)
+                    .then_with(|| a.datetime.cmp(&b.datetime))
+            }),
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.datetime.cmp(&a.datetime))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.datetime.cmp(&b.datetime))
+            }),
+            (SortField::Date, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.datetime
+                    .cmp(&b.datetime)
+                    .then_with(|| a.source.cmp(&b.source))
+            }),
+            _ => rows.sort_by(|a, b| {
+                b.datetime
+                    .cmp(&a.datetime)
+                    .then_with(|| a.source.cmp(&b.source))
+            }),
+        }
+
+        rows
+    }
+
+    pub fn get_model_client_rows(&self, model: &str) -> Vec<ModelClientRow> {
+        let mut rows = Vec::new();
+        let mut total_tokens: u64 = 0;
+        for client in &self.data.clients {
+            if let Some(m_info) = client.models.get(model) {
+                total_tokens = total_tokens.saturating_add(m_info.tokens.total());
+                rows.push(ModelClientRow {
+                    client: client.client.clone(),
+                    display_name: crate::tui::ui::widgets::get_client_display_name(&client.client)
+                        .to_string(),
+                    tokens: m_info.tokens.clone(),
+                    cost: m_info.cost,
+                    messages: m_info.message_count as u64,
+                    token_share: 0.0,
+                });
+            }
+        }
+        for r in &mut rows {
+            if total_tokens > 0 {
+                r.token_share = (r.tokens.total() as f64 / total_tokens as f64) * 100.0;
+            }
+        }
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.cost.total_cmp(&a.cost))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.cost.total_cmp(&b.cost))
+            }),
+            (SortField::Cost, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.cost
+                    .total_cmp(&b.cost)
+                    .then_with(|| a.client.cmp(&b.client))
+            }),
+            _ => rows.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| a.client.cmp(&b.client))
+            }),
+        }
+
+        rows
+    }
+
+    pub fn get_model_session_rows(&self, model: &str) -> Vec<ModelSessionRow> {
+        let mut rows = Vec::new();
+        for s in &self.data.sessions {
+            if s.models
+                .iter()
+                .any(|m| m.display_name == model || m.color_key == model)
+            {
+                rows.push(ModelSessionRow {
+                    session_id: s.session_id.clone(),
+                    client: s.client.clone(),
+                    title: s.title.clone(),
+                    tokens: s.tokens.clone(),
+                    cost: s.cost,
+                    messages: s.message_count,
+                    last_active_ms: s.last_active_ms,
+                });
+            }
+        }
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| b.last_active_ms.cmp(&a.last_active_ms))
+            }),
+            (SortField::Cost, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.cost
+                    .total_cmp(&b.cost)
+                    .then_with(|| a.last_active_ms.cmp(&b.last_active_ms))
+            }),
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.last_active_ms.cmp(&a.last_active_ms))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.last_active_ms.cmp(&b.last_active_ms))
+            }),
+            (SortField::Date, SortDirection::Ascending) => rows.sort_by_key(|a| a.last_active_ms),
+            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.last_active_ms)),
+        }
+
+        rows
+    }
+
+    pub fn get_model_monthly_rows(&self, model: &str) -> Vec<ModelMonthlyRow> {
+        let daily_rows = self.get_model_daily_rows(model);
+        let mut month_map: std::collections::BTreeMap<String, (TokenBreakdown, f64, u64)> =
+            std::collections::BTreeMap::new();
+        for dr in daily_rows {
+            let month_key = dr.date.format("%Y-%m").to_string();
+            let entry = month_map
+                .entry(month_key)
+                .or_insert_with(|| (TokenBreakdown::default(), 0.0, 0));
+            entry.0.input = entry.0.input.saturating_add(dr.tokens.input);
+            entry.0.output = entry.0.output.saturating_add(dr.tokens.output);
+            entry.0.cache_read = entry.0.cache_read.saturating_add(dr.tokens.cache_read);
+            entry.0.cache_write = entry.0.cache_write.saturating_add(dr.tokens.cache_write);
+            entry.0.reasoning = entry.0.reasoning.saturating_add(dr.tokens.reasoning);
+            entry.1 += dr.cost;
+            entry.2 = entry.2.saturating_add(dr.messages);
+        }
+        let mut rows: Vec<ModelMonthlyRow> = month_map
+            .into_iter()
+            .map(|(month, (tokens, cost, messages))| ModelMonthlyRow {
+                month,
+                tokens,
+                cost,
+                messages,
+            })
+            .collect();
+
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.cost
+                    .total_cmp(&a.cost)
+                    .then_with(|| b.month.cmp(&a.month))
+            }),
+            (SortField::Cost, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.cost
+                    .total_cmp(&b.cost)
+                    .then_with(|| a.month.cmp(&b.month))
+            }),
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.month.cmp(&a.month))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.month.cmp(&b.month))
+            }),
+            (SortField::Date, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.month.cmp(&b.month))
+            }
+            _ => rows.sort_by(|a, b| b.month.cmp(&a.month)),
+        }
+
+        rows
     }
 
     pub fn get_sorted_minutely(&self) -> Vec<&MinutelyUsage> {
@@ -3030,25 +4198,27 @@ mod tests {
     #[test]
     fn test_tab_all() {
         let tabs = Tab::all();
-        assert_eq!(tabs.len(), 11);
+        assert_eq!(tabs.len(), 12);
         assert_eq!(tabs[0], Tab::Overview);
         assert_eq!(tabs[1], Tab::Usage);
         assert_eq!(tabs[2], Tab::Models);
-        assert_eq!(tabs[3], Tab::Daily);
-        assert_eq!(tabs[4], Tab::Hourly);
-        assert_eq!(tabs[5], Tab::Minutely);
-        assert_eq!(tabs[6], Tab::Monthly);
-        assert_eq!(tabs[7], Tab::Sessions);
-        assert_eq!(tabs[8], Tab::Projects);
-        assert_eq!(tabs[9], Tab::Stats);
-        assert_eq!(tabs[10], Tab::Agents);
+        assert_eq!(tabs[3], Tab::Clients);
+        assert_eq!(tabs[4], Tab::Daily);
+        assert_eq!(tabs[5], Tab::Hourly);
+        assert_eq!(tabs[6], Tab::Minutely);
+        assert_eq!(tabs[7], Tab::Monthly);
+        assert_eq!(tabs[8], Tab::Sessions);
+        assert_eq!(tabs[9], Tab::Projects);
+        assert_eq!(tabs[10], Tab::Stats);
+        assert_eq!(tabs[11], Tab::Agents);
     }
 
     #[test]
     fn test_tab_next() {
         assert_eq!(Tab::Overview.next(), Tab::Usage);
         assert_eq!(Tab::Usage.next(), Tab::Models);
-        assert_eq!(Tab::Models.next(), Tab::Daily);
+        assert_eq!(Tab::Models.next(), Tab::Clients);
+        assert_eq!(Tab::Clients.next(), Tab::Daily);
         assert_eq!(Tab::Daily.next(), Tab::Hourly);
         assert_eq!(Tab::Hourly.next(), Tab::Minutely);
         assert_eq!(Tab::Minutely.next(), Tab::Monthly);
@@ -3064,7 +4234,8 @@ mod tests {
         assert_eq!(Tab::Overview.prev(), Tab::Agents);
         assert_eq!(Tab::Usage.prev(), Tab::Overview);
         assert_eq!(Tab::Models.prev(), Tab::Usage);
-        assert_eq!(Tab::Daily.prev(), Tab::Models);
+        assert_eq!(Tab::Clients.prev(), Tab::Models);
+        assert_eq!(Tab::Daily.prev(), Tab::Clients);
         assert_eq!(Tab::Hourly.prev(), Tab::Daily);
         assert_eq!(Tab::Minutely.prev(), Tab::Hourly);
         assert_eq!(Tab::Monthly.prev(), Tab::Minutely);
@@ -3078,6 +4249,7 @@ mod tests {
     fn test_tab_as_str() {
         assert_eq!(Tab::Overview.as_str(), "Overview");
         assert_eq!(Tab::Models.as_str(), "Models");
+        assert_eq!(Tab::Clients.as_str(), "Clients");
         assert_eq!(Tab::Agents.as_str(), "Agents");
         assert_eq!(Tab::Daily.as_str(), "Daily");
         assert_eq!(Tab::Hourly.as_str(), "Hourly");
@@ -3977,6 +5149,133 @@ mod tests {
         assert!(!app.is_monthly_detail_active());
     }
 
+    #[test]
+    fn test_models_tab_inspect_opens_model_detail_menu() {
+        let mut app = make_app();
+        app.switch_tab(Tab::Models);
+        app.data.models = vec![ModelUsage {
+            model: "gpt-4o".to_string(),
+            color_key: "gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            client: "cli".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            tokens: Default::default(),
+            cost: 10.0,
+            performance: Default::default(),
+            session_count: 1,
+            machine: None,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+
+        app.handle_key_event(key(KeyCode::Char('i')));
+
+        assert!(app.is_model_detail_active());
+        assert!(app.is_model_detail_menu_active());
+        assert!(!app.is_model_detail_view_active());
+        assert_eq!(app.model_detail.as_ref().unwrap().model_name, "gpt-4o");
+        assert_eq!(app.model_detail.as_ref().unwrap().menu_cursor, 0);
+    }
+
+    #[test]
+    fn test_model_detail_menu_navigation_and_selection() {
+        let mut app = make_app();
+        app.switch_tab(Tab::Models);
+        app.data.models = vec![ModelUsage {
+            model: "gpt-4o".to_string(),
+            color_key: "gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            client: "cli".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            tokens: Default::default(),
+            cost: 10.0,
+            performance: Default::default(),
+            session_count: 1,
+            machine: None,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+
+        // 'i' opens menu
+        app.handle_key_event(key(KeyCode::Char('i')));
+        assert!(app.is_model_detail_menu_active());
+
+        // Down moves cursor to 1 (Hourly)
+        app.handle_key_event(key(KeyCode::Down));
+        assert_eq!(app.model_detail.as_ref().unwrap().menu_cursor, 1);
+
+        // Down with 'j' moves cursor to 2 (Clients)
+        app.handle_key_event(key(KeyCode::Char('j')));
+        assert_eq!(app.model_detail.as_ref().unwrap().menu_cursor, 2);
+
+        // Up moves cursor back to 1
+        app.handle_key_event(key(KeyCode::Up));
+        assert_eq!(app.model_detail.as_ref().unwrap().menu_cursor, 1);
+
+        // Enter on menu selects Hourly view
+        app.handle_key_event(key(KeyCode::Enter));
+        assert!(app.is_model_detail_view_active());
+        assert_eq!(
+            app.model_detail.as_ref().unwrap().active_view,
+            Some(ModelDetailViewType::Hourly)
+        );
+
+        // Esc returns to menu
+        app.handle_key_event(key(KeyCode::Esc));
+        assert!(app.is_model_detail_menu_active());
+        assert!(!app.is_model_detail_view_active());
+
+        // Esc again closes menu back to main table
+        app.handle_key_event(key(KeyCode::Esc));
+        assert!(!app.is_model_detail_active());
+    }
+
+    #[test]
+    fn test_model_detail_number_keys_selection() {
+        let mut app = make_app();
+        app.switch_tab(Tab::Models);
+        app.data.models = vec![ModelUsage {
+            model: "claude-3-5-sonnet".to_string(),
+            color_key: "claude-3-5-sonnet".to_string(),
+            provider: "anthropic".to_string(),
+            client: "cli".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            tokens: Default::default(),
+            cost: 15.0,
+            performance: Default::default(),
+            session_count: 1,
+            machine: None,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+
+        // Open menu
+        app.handle_key_event(key(KeyCode::Char('i')));
+        assert!(app.is_model_detail_menu_active());
+
+        // Press '3' -> selects Clients directly
+        app.handle_key_event(key(KeyCode::Char('3')));
+        assert!(app.is_model_detail_view_active());
+        assert_eq!(
+            app.model_detail.as_ref().unwrap().active_view,
+            Some(ModelDetailViewType::Clients)
+        );
+
+        // Backspace returns to menu
+        app.handle_key_event(key(KeyCode::Backspace));
+        assert!(app.is_model_detail_menu_active());
+
+        // Press '4' -> selects Sessions directly
+        app.handle_key_event(key(KeyCode::Char('4')));
+        assert_eq!(
+            app.model_detail.as_ref().unwrap().active_view,
+            Some(ModelDetailViewType::Sessions)
+        );
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -4035,6 +5334,9 @@ mod tests {
         assert_eq!(app.current_tab, Tab::Models);
 
         app.handle_key_event(key(KeyCode::Tab));
+        assert_eq!(app.current_tab, Tab::Clients);
+
+        app.handle_key_event(key(KeyCode::Tab));
         assert_eq!(app.current_tab, Tab::Daily);
 
         app.handle_key_event(key(KeyCode::Tab));
@@ -4086,6 +5388,9 @@ mod tests {
         assert_eq!(app.current_tab, Tab::Daily);
 
         app.handle_key_event(key(KeyCode::BackTab));
+        assert_eq!(app.current_tab, Tab::Clients);
+
+        app.handle_key_event(key(KeyCode::BackTab));
         assert_eq!(app.current_tab, Tab::Models);
 
         app.handle_key_event(key(KeyCode::BackTab));
@@ -4104,6 +5409,7 @@ mod tests {
         for expected in [
             Tab::Usage,
             Tab::Models,
+            Tab::Clients,
             Tab::Daily,
             Tab::Hourly,
             Tab::Minutely,

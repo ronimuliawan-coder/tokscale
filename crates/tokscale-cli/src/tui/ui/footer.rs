@@ -222,6 +222,12 @@ fn current_count_label(app: &App) -> String {
         Tab::Overview | Tab::Models => {
             format_count(lang, app.data.models.len(), MessageKey::CountModels)
         }
+        Tab::Clients if app.is_client_detail_active() => format_count(
+            lang,
+            app.get_sorted_client_detail_rows().len(),
+            MessageKey::CountModels,
+        ),
+        Tab::Clients => format!(" ({} clients)", app.data.clients.len()),
         Tab::Agents => format_count(lang, app.data.agents.len(), MessageKey::CountAgents),
         Tab::Daily if app.is_daily_detail_active() => format_count(
             lang,
@@ -303,6 +309,22 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled("q", Style::default().fg(app.theme.muted)),
         ];
+        if app.current_tab == Tab::Models {
+            spans.push(Span::styled("·", Style::default().fg(app.theme.muted)));
+            if app.is_model_detail_active() {
+                spans.push(Span::styled("esc", hint_style));
+            } else {
+                spans.push(Span::styled("↵", hint_style));
+            }
+        }
+        if app.current_tab == Tab::Clients {
+            spans.push(Span::styled("·", Style::default().fg(app.theme.muted)));
+            if app.is_client_detail_active() {
+                spans.push(Span::styled("esc", hint_style));
+            } else {
+                spans.push(Span::styled("↵", hint_style));
+            }
+        }
         if app.current_tab == Tab::Daily {
             spans.push(Span::styled(
                 app.glyphs.compact_separator,
@@ -418,6 +440,17 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(separator, Style::default().fg(app.theme.muted)),
             ]
         };
+        if app.current_tab == Tab::Clients {
+            if app.is_client_detail_active() {
+                spans.push(Span::styled(tr(lang, MessageKey::HelpBack), hint_style));
+            } else {
+                spans.push(Span::styled(tr(lang, MessageKey::HelpDetails), hint_style));
+            }
+            spans.push(Span::styled(
+                separator,
+                Style::default().fg(app.theme.muted),
+            ));
+        }
         if app.current_tab == Tab::Daily {
             if app.is_daily_detail_active() {
                 spans.push(Span::styled(tr(lang, MessageKey::HelpBack), hint_style));
@@ -443,7 +476,13 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             ));
         }
         if app.current_tab == Tab::Models {
-            if app.is_model_trend_active() {
+            if app.is_model_detail_view_active() {
+                spans.push(Span::styled("[esc:options]", hint_style));
+            } else if app.is_model_detail_menu_active() {
+                spans.push(Span::styled("[enter:select]", hint_style));
+                spans.push(Span::styled(inline_gap, Style::default()));
+                spans.push(Span::styled("[esc:cancel]", hint_style));
+            } else if app.is_model_trend_active() {
                 spans.push(Span::styled(tr(lang, MessageKey::HelpBack), hint_style));
             } else {
                 spans.push(Span::styled(tr(lang, MessageKey::HelpDetails), hint_style));
@@ -454,7 +493,22 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             ));
         }
         if app.current_tab == Tab::Hourly {
-            spans.push(Span::styled(tr(lang, MessageKey::HelpProfile), hint_style));
+            if app.is_hourly_detail_active() {
+                spans.push(Span::styled(tr(lang, MessageKey::HelpBack), hint_style));
+            } else {
+                spans.push(Span::styled(tr(lang, MessageKey::HelpDetails), hint_style));
+                spans.push(Span::styled(inline_gap, Style::default()));
+                spans.push(Span::styled(tr(lang, MessageKey::HelpProfile), hint_style));
+                spans.push(Span::styled(inline_gap, Style::default()));
+                spans.push(Span::styled(
+                    if app.hourly_split_sources {
+                        "[m:merged]"
+                    } else {
+                        "[m:split]"
+                    },
+                    hint_style,
+                ));
+            }
             spans.push(Span::styled(
                 separator,
                 Style::default().fg(app.theme.muted),
@@ -479,6 +533,15 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(app.theme.muted),
             ));
         }
+        spans.push(Span::styled(
+            if app.cache_display_percent {
+                "[%:cache%]"
+            } else {
+                "[%:cache✕]"
+            },
+            hint_style,
+        ));
+        spans.push(Span::styled(inline_gap, Style::default()));
         spans.push(Span::styled(tr(lang, MessageKey::HelpSources), count_style));
         spans.push(Span::styled(inline_gap, Style::default()));
         spans.push(Span::styled(
@@ -1036,6 +1099,10 @@ mod tests {
         assert_eq!(
             current_count_label(&make_app_on(Tab::Models)),
             " (0 models)"
+        );
+        assert_eq!(
+            current_count_label(&make_app_on(Tab::Clients)),
+            " (0 clients)"
         );
         assert_eq!(
             current_count_label(&make_app_on(Tab::Agents)),
