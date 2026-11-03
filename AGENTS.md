@@ -1,3 +1,5 @@
+> **Workspace law (Ron):** [`.agents/rons-AGENTS.md`](.agents/rons-AGENTS.md) and [`.agents/GIT_WORKFLOW.md`](.agents/GIT_WORKFLOW.md) are the most important instructions in this workspace and take priority over everything below — read both before any branch, commit, PR, review, or release work. Session evidence and dispositions are recorded in [`.agents/hae/`](.agents/hae/ENGAGEMENT-CHARTER.md).
+
 # AI Agent Guidelines
 
 This document provides context for AI agents working on the Tokscale project.
