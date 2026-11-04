@@ -7,10 +7,20 @@ use crate::tui::export::build_export_json;
 use crate::tui::ui::widgets::get_client_display_name;
 
 fn escape_csv(val: &str) -> String {
-    if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r') {
+    // Neutralize spreadsheet formula injection: text beginning with =, +, -, @,
+    // tab or CR evaluates as a formula when the CSV is opened in a spreadsheet.
+    // Prefix those values with an apostrophe; leave everything else untouched.
+    let formula_prefix = val.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    let escaped = if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r')
+    {
         format!("\"{}\"", val.replace('"', "\"\""))
     } else {
         val.to_string()
+    };
+    if formula_prefix {
+        format!("'{}", escaped)
+    } else {
+        escaped
     }
 }
 
@@ -790,6 +800,43 @@ mod tests {
         let csv_sessions = export_csv(&data, "sessions", false).unwrap();
         assert!(csv_sessions
             .contains("sess-1,opencode,Test Session,100,50,800,50,0,1000,84.2%,0.5000,5,5"));
+    }
+
+    #[test]
+    fn escape_csv_neutralizes_formula_prefixes() {
+        assert_eq!(escape_csv("=SUM(A1)"), "'=SUM(A1)");
+        assert_eq!(escape_csv("+1+1"), "'+1+1");
+        assert_eq!(escape_csv("@import"), "'@import");
+        assert_eq!(escape_csv("-cmd"), "'-cmd");
+        // Formula character plus a delimiter: prefix outside the quoting.
+        assert_eq!(escape_csv("=cmd,1"), "'\"=cmd,1\"");
+        // Ordinary data is untouched (dates and timestamps never lead with a flag).
+        assert_eq!(escape_csv("2026-05-29"), "2026-05-29");
+        assert_eq!(escape_csv("plain title"), "plain title");
+        assert_eq!(escape_csv("a,\"b\""), "\"a,\"\"b\"\"\"");
+    }
+
+    #[test]
+    fn export_csv_sessions_hostile_title() {
+        let mut data = test_usage_data();
+        data.sessions.push(crate::tui::data::SessionUsage {
+            session_id: "sess-evil".to_string(),
+            client: "opencode".to_string(),
+            title: Some("=HYPERLINK(\"http://evil\")".to_string()),
+            workspace_key: None,
+            workspace_label: None,
+            agents: Vec::new(),
+            models: Vec::new(),
+            tokens: Default::default(),
+            cost: 0.0,
+            message_count: 1,
+            turn_count: 1,
+            first_active_ms: 0,
+            last_active_ms: 0,
+            subagent_count: 0,
+        });
+        let csv = export_csv(&data, "sessions", false).unwrap();
+        assert!(csv.contains("'\"=HYPERLINK(\"\"http://evil\"\")\""));
     }
 
     #[test]
