@@ -507,9 +507,9 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
     let cache_hit_str =
         format_cache_hit_percent(total_cache_read, total_input, total_cache_write, app.glyphs);
     let cache_label = if is_narrow {
-        "Cache hit:"
+        tr(lang, MessageKey::StatsCacheHitShort)
     } else {
-        "Cache hit rate:"
+        tr(lang, MessageKey::StatsCacheHitRate)
     };
     let cache_hit_line = Line::from(vec![
         Span::styled(cache_label, Style::default().fg(app.theme.muted)),
@@ -540,9 +540,9 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         let burn_label = if is_narrow {
-            "Burn (7d):"
+            tr(lang, MessageKey::StatsBurnShort)
         } else {
-            "Burn rate (7d):"
+            tr(lang, MessageKey::StatsBurnRate)
         };
         let burn_line = Line::from(vec![
             Span::styled(burn_label, Style::default().fg(app.theme.muted)),
@@ -558,9 +558,9 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
         );
 
         let proj_label = if is_narrow {
-            "Proj (30d):"
+            tr(lang, MessageKey::StatsProjShort)
         } else {
-            "30d projection:"
+            tr(lang, MessageKey::StatsProjection)
         };
         let proj_line = Line::from(vec![
             Span::styled(proj_label, Style::default().fg(app.theme.muted)),

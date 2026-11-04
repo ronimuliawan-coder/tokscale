@@ -99,26 +99,21 @@ impl Tab {
     }
 
     pub fn localized_name(&self, lang: TuiLanguage) -> &'static str {
-        match self {
-            Tab::Clients => "Clients",
-            _ => {
-                let key = match self {
-                    Tab::Overview => MessageKey::TabOverview,
-                    Tab::Usage => MessageKey::TabUsage,
-                    Tab::Models => MessageKey::TabModels,
-                    Tab::Daily => MessageKey::TabDaily,
-                    Tab::Hourly => MessageKey::TabHourly,
-                    Tab::Minutely => MessageKey::TabMinutely,
-                    Tab::Monthly => MessageKey::TabMonthly,
-                    Tab::Sessions => MessageKey::TabSessions,
-                    Tab::Projects => MessageKey::TabProjects,
-                    Tab::Stats => MessageKey::TabStats,
-                    Tab::Agents => MessageKey::TabAgents,
-                    Tab::Clients => unreachable!(),
-                };
-                tr(lang, key)
-            }
-        }
+        let key = match self {
+            Tab::Overview => MessageKey::TabOverview,
+            Tab::Usage => MessageKey::TabUsage,
+            Tab::Models => MessageKey::TabModels,
+            Tab::Clients => MessageKey::TabClients,
+            Tab::Daily => MessageKey::TabDaily,
+            Tab::Hourly => MessageKey::TabHourly,
+            Tab::Minutely => MessageKey::TabMinutely,
+            Tab::Monthly => MessageKey::TabMonthly,
+            Tab::Sessions => MessageKey::TabSessions,
+            Tab::Projects => MessageKey::TabProjects,
+            Tab::Stats => MessageKey::TabStats,
+            Tab::Agents => MessageKey::TabAgents,
+        };
+        tr(lang, key)
     }
 
     #[allow(dead_code)]
@@ -127,26 +122,21 @@ impl Tab {
     }
 
     pub fn localized_short_name(&self, lang: TuiLanguage) -> &'static str {
-        match self {
-            Tab::Clients => "Cli",
-            _ => {
-                let key = match self {
-                    Tab::Overview => MessageKey::TabOverviewShort,
-                    Tab::Usage => MessageKey::TabUsageShort,
-                    Tab::Models => MessageKey::TabModelsShort,
-                    Tab::Daily => MessageKey::TabDailyShort,
-                    Tab::Hourly => MessageKey::TabHourlyShort,
-                    Tab::Minutely => MessageKey::TabMinutelyShort,
-                    Tab::Monthly => MessageKey::TabMonthlyShort,
-                    Tab::Sessions => MessageKey::TabSessionsShort,
-                    Tab::Projects => MessageKey::TabProjectsShort,
-                    Tab::Stats => MessageKey::TabStatsShort,
-                    Tab::Agents => MessageKey::TabAgentsShort,
-                    Tab::Clients => unreachable!(),
-                };
-                tr(lang, key)
-            }
-        }
+        let key = match self {
+            Tab::Overview => MessageKey::TabOverviewShort,
+            Tab::Usage => MessageKey::TabUsageShort,
+            Tab::Models => MessageKey::TabModelsShort,
+            Tab::Clients => MessageKey::TabClientsShort,
+            Tab::Daily => MessageKey::TabDailyShort,
+            Tab::Hourly => MessageKey::TabHourlyShort,
+            Tab::Minutely => MessageKey::TabMinutelyShort,
+            Tab::Monthly => MessageKey::TabMonthlyShort,
+            Tab::Sessions => MessageKey::TabSessionsShort,
+            Tab::Projects => MessageKey::TabProjectsShort,
+            Tab::Stats => MessageKey::TabStatsShort,
+            Tab::Agents => MessageKey::TabAgentsShort,
+        };
+        tr(lang, key)
     }
 
     pub fn next(self) -> Tab {

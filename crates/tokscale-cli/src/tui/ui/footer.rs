@@ -227,7 +227,7 @@ fn current_count_label(app: &App) -> String {
             app.get_sorted_client_detail_rows().len(),
             MessageKey::CountModels,
         ),
-        Tab::Clients => format!(" ({} clients)", app.data.clients.len()),
+        Tab::Clients => format_count(lang, app.data.clients.len(), MessageKey::CountClients),
         Tab::Agents => format_count(lang, app.data.agents.len(), MessageKey::CountAgents),
         Tab::Daily if app.is_daily_detail_active() => format_count(
             lang,
