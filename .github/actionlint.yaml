@@ -1,0 +1,6 @@
+# Namespace cloud runners route jobs via nscloud-* labels; actionlint only
+# knows GitHub-hosted labels natively, so declare ours here.
+self-hosted-runner:
+  labels:
+    - nscloud-ubuntu-24.04-amd64-4x8
+    - nscloud-macos-tahoe-arm64-6x14
