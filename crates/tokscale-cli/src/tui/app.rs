@@ -2404,7 +2404,8 @@ impl App {
         self.persist_current_sort();
         if (self.current_tab == Tab::Daily && self.is_daily_detail_active())
             || (self.current_tab == Tab::Monthly && self.is_monthly_detail_active())
-            || (self.current_tab == Tab::Models && self.is_model_trend_active())
+            || (self.current_tab == Tab::Models
+                && (self.is_model_trend_active() || self.is_model_detail_active()))
             || (self.current_tab == Tab::Hourly && self.is_hourly_detail_active())
             || (self.current_tab == Tab::Clients && self.is_client_detail_active())
         {
