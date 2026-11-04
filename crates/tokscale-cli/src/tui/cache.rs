@@ -623,6 +623,17 @@ impl TryFrom<CachedHourlyUsage> for HourlyUsage {
                 .collect()
         };
 
+        // Legacy single-client entry: the hour's tokens are that client's,
+        // mirroring the source_breakdown fallback above.
+        let client_breakdown = if h.client_breakdown.is_empty() && h.clients.len() == 1 {
+            std::iter::once((h.clients[0].clone(), h.tokens.clone().into())).collect()
+        } else {
+            h.client_breakdown
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect()
+        };
+
         Ok(Self {
             datetime: NaiveDateTime::parse_from_str(&h.datetime, "%Y-%m-%d %H:%M:%S")?,
             tokens: h.tokens.into(),
@@ -637,11 +648,7 @@ impl TryFrom<CachedHourlyUsage> for HourlyUsage {
                 })
                 .collect(),
             source_breakdown,
-            client_breakdown: h
-                .client_breakdown
-                .into_iter()
-                .map(|(key, value)| (key, value.into()))
-                .collect(),
+            client_breakdown,
             message_count: h.message_count,
             turn_count: h.turn_count,
         })
