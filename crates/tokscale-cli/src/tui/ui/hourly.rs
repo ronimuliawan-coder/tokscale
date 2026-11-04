@@ -558,15 +558,20 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
                 ]
             } else {
+                // Mid tier: the columns shrink, so clip the free-text cells
+                // explicitly (with the ellipsis marker) instead of letting the
+                // column boundary cut them silently.
+                let model_limit = if drop_provider { 10 } else { 30 };
+                let source_limit = if drop_provider { 8 } else { 14 };
                 vec![
                     Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
-                    Cell::from(truncate_text(row.model, 30)).style(
+                    Cell::from(truncate_text(row.model, model_limit)).style(
                         Style::default()
                             .fg(model_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(get_provider_display_name(row.provider)),
-                    Cell::from(get_client_display_name(row.source))
+                    Cell::from(truncate_text(&get_client_display_name(row.source), source_limit))
                         .style(Style::default().fg(theme_muted)),
                     Cell::from(row.messages.to_string()),
                     Cell::from(format_tokens(row.tokens.input)).style(metric_input_style),
@@ -1048,7 +1053,9 @@ mod tests {
         let mut app = make_app(140);
         app.data.hourly = vec![hour_with_sources(d, 14)];
 
-        // Select the first row and open detail view.
+        // Default hourly sort is Tokens/Descending, so the first row is the
+        // opencode row (2K) and the second the codex row (1K). Detail views
+        // are scoped to the opened row's source.
         app.selected_index = 0;
         app.open_selected_hourly_detail();
         assert!(app.is_hourly_detail_active());
@@ -1058,9 +1065,8 @@ mod tests {
         );
 
         let detail_rows = app.get_sorted_hourly_detail_rows();
-        assert_eq!(detail_rows.len(), 2);
-        assert_eq!(detail_rows[0].model, "gpt-5");
-        assert_eq!(detail_rows[1].model, "claude-sonnet");
+        assert_eq!(detail_rows.len(), 1, "scoped to the opened row's source");
+        assert_eq!(detail_rows[0].model, "claude-sonnet");
 
         // Render wide enough for the full layout: below ~141 columns the
         // detail view drops the provider column (mid tier).
@@ -1069,13 +1075,30 @@ mod tests {
             body.contains("Hourly Detail: 2026-05-29 14:00"),
             "expected detail title\n{body}"
         );
-        assert!(
-            body.contains("claude-sonnet"),
-            "expected claude-sonnet\n{body}"
-        );
-        assert!(body.contains("gpt-5"), "expected gpt-5\n{body}");
+        assert!(body.contains("claude-sonnet"), "expected claude-sonnet\n{body}");
         assert!(body.contains("Anthropic"), "expected Anthropic\n{body}");
+        assert!(
+            !body.contains("gpt-5"),
+            "the codex row must not leak into the opencode detail\n{body}"
+        );
+
+        // Close, then open the second row (codex): scoped to its source.
+        app.close_hourly_detail();
+        assert!(!app.is_hourly_detail_active());
+        assert_eq!(app.hourly_detail_dt(), None);
+
+        app.selected_index = 1;
+        app.open_selected_hourly_detail();
+        let detail_rows = app.get_sorted_hourly_detail_rows();
+        assert_eq!(detail_rows.len(), 1, "scoped to the opened row's source");
+        assert_eq!(detail_rows[0].model, "gpt-5");
+        let body = render_lines(&mut app, 144, 20).join("\n");
+        assert!(body.contains("gpt-5"), "expected gpt-5\n{body}");
         assert!(body.contains("OpenAI"), "expected OpenAI\n{body}");
+        assert!(
+            !body.contains("claude-sonnet"),
+            "the opencode row must not leak into the codex detail\n{body}"
+        );
 
         // Close detail view.
         app.close_hourly_detail();
