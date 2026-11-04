@@ -78,6 +78,7 @@ pub enum MessageKey {
     TabProjects,
     TabStats,
     TabAgents,
+    TabClients,
 
     // Short tab names (for very narrow terminals)
     TabOverviewShort,
@@ -91,6 +92,7 @@ pub enum MessageKey {
     TabProjectsShort,
     TabStatsShort,
     TabAgentsShort,
+    TabClientsShort,
 
     ColDate,
     ColCost,
@@ -151,6 +153,7 @@ pub enum MessageKey {
     CountMonths,
     CountSessions,
     CountProjects,
+    CountClients,
 
     // Sort buttons
     SortLabel,
@@ -292,6 +295,12 @@ pub enum MessageKey {
     StatsPeakHourShort,
     StatsLess,
     StatsMore,
+    StatsCacheHitShort,
+    StatsCacheHitRate,
+    StatsBurnShort,
+    StatsBurnRate,
+    StatsProjShort,
+    StatsProjection,
 
     // Dialog labels (additional)
     DialogCurrentLabel,
@@ -551,6 +560,8 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::TabProjects => "Projects",
         MessageKey::TabStats => "Stats",
         MessageKey::TabAgents => "Agents",
+        MessageKey::TabClients => "Clients",
+        MessageKey::TabClientsShort => "Cli",
 
         MessageKey::TabOverviewShort => "Ovw",
         MessageKey::TabUsageShort => "Use",
@@ -622,6 +633,7 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::CountMonths => "months",
         MessageKey::CountSessions => "sessions",
         MessageKey::CountProjects => "projects",
+        MessageKey::CountClients => "clients",
 
         MessageKey::SortLabel => "Sort: ",
         MessageKey::SortDate => "Date",
@@ -751,6 +763,12 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::StatsPeakHourShort => "Peak:",
         MessageKey::StatsLess => "Less",
         MessageKey::StatsMore => "More",
+        MessageKey::StatsCacheHitShort => "Cache hit:",
+        MessageKey::StatsCacheHitRate => "Cache hit rate:",
+        MessageKey::StatsBurnShort => "Burn (7d):",
+        MessageKey::StatsBurnRate => "Burn rate (7d):",
+        MessageKey::StatsProjShort => "Proj (30d):",
+        MessageKey::StatsProjection => "30d projection:",
 
         MessageKey::DialogCurrentLabel => "Current: ",
         MessageKey::DialogCancel => "[ Cancel ]",
@@ -965,6 +983,8 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::TabProjects => "프로젝트",
         MessageKey::TabStats => "통계",
         MessageKey::TabAgents => "에이전트",
+        MessageKey::TabClients => "클라이언트",
+        MessageKey::TabClientsShort => "클라",
 
         MessageKey::TabOverviewShort => "개요",
         MessageKey::TabUsageShort => "사용",
@@ -1047,6 +1067,7 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::CountMonths => "개월",
         MessageKey::CountSessions => "개 세션",
         MessageKey::CountProjects => "개 프로젝트",
+        MessageKey::CountClients => "클라이언트",
 
         MessageKey::SortLabel => "정렬: ",
         MessageKey::SortDate => "날짜",
@@ -1174,6 +1195,12 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatsPeakHourShort => "피크:",
         MessageKey::StatsLess => "적음",
         MessageKey::StatsMore => "많음",
+        MessageKey::StatsCacheHitShort => "캐시 히트:",
+        MessageKey::StatsCacheHitRate => "캐시 적중률:",
+        MessageKey::StatsBurnShort => "소모 (7일):",
+        MessageKey::StatsBurnRate => "소모율 (7일):",
+        MessageKey::StatsProjShort => "예측 (30일):",
+        MessageKey::StatsProjection => "30일 예측:",
 
         MessageKey::DialogCurrentLabel => "현재: ",
         MessageKey::DialogCancel => "[ 취소 ]",
@@ -1404,6 +1431,8 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::TabProjects => "プロジェクト",
         MessageKey::TabStats => "統計",
         MessageKey::TabAgents => "エージェント",
+        MessageKey::TabClients => "クライアント",
+        MessageKey::TabClientsShort => "クライ",
 
         MessageKey::TabOverviewShort => "概要",
         MessageKey::TabUsageShort => "使用",
@@ -1477,6 +1506,7 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::CountMonths => "ヶ月",
         MessageKey::CountSessions => "セッション",
         MessageKey::CountProjects => "プロジェクト",
+        MessageKey::CountClients => "クライアント",
 
         MessageKey::SortLabel => "並び替え: ",
         MessageKey::SortDate => "日付",
@@ -1604,6 +1634,12 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatsPeakHourShort => "ピーク:",
         MessageKey::StatsLess => "少",
         MessageKey::StatsMore => "多",
+        MessageKey::StatsCacheHitShort => "キャッシュヒット:",
+        MessageKey::StatsCacheHitRate => "キャッシュ命中率:",
+        MessageKey::StatsBurnShort => "消費 (7日):",
+        MessageKey::StatsBurnRate => "消費率 (7日):",
+        MessageKey::StatsProjShort => "予測 (30日):",
+        MessageKey::StatsProjection => "30日予測:",
 
         MessageKey::DialogCurrentLabel => "現在: ",
         MessageKey::DialogCancel => "[ キャンセル ]",
@@ -1830,6 +1866,8 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::TabProjects => "项目",
         MessageKey::TabStats => "统计",
         MessageKey::TabAgents => "智能体",
+        MessageKey::TabClients => "客户端",
+        MessageKey::TabClientsShort => "客户端",
 
         MessageKey::TabOverviewShort => "概览",
         MessageKey::TabUsageShort => "用量",
@@ -1898,6 +1936,7 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::CountMonths => "个月",
         MessageKey::CountSessions => "个会话",
         MessageKey::CountProjects => "个项目",
+        MessageKey::CountClients => "个客户端",
 
         MessageKey::SortLabel => "排序: ",
         MessageKey::SortDate => "日期",
@@ -2025,6 +2064,12 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatsPeakHourShort => "高峰:",
         MessageKey::StatsLess => "少",
         MessageKey::StatsMore => "多",
+        MessageKey::StatsCacheHitShort => "缓存命中:",
+        MessageKey::StatsCacheHitRate => "缓存命中率:",
+        MessageKey::StatsBurnShort => "消耗 (7天):",
+        MessageKey::StatsBurnRate => "消耗率 (7天):",
+        MessageKey::StatsProjShort => "预测 (30天):",
+        MessageKey::StatsProjection => "30天预测:",
 
         MessageKey::DialogCurrentLabel => "当前: ",
         MessageKey::DialogCancel => "[ 取消 ]",
@@ -2240,6 +2285,8 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::TabProjects => "Projets",
         MessageKey::TabStats => "Statistiques",
         MessageKey::TabAgents => "Agents",
+        MessageKey::TabClients => "Clients",
+        MessageKey::TabClientsShort => "Cli",
 
         MessageKey::TabOverviewShort => "Ape",
         MessageKey::TabUsageShort => "Uti",
@@ -2311,6 +2358,7 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::CountMonths => "mois",
         MessageKey::CountSessions => "sessions",
         MessageKey::CountProjects => "projets",
+        MessageKey::CountClients => "clients",
 
         MessageKey::SortLabel => "Tri: ",
         MessageKey::SortDate => "Date",
@@ -2438,6 +2486,12 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatsPeakHourShort => "Pic :",
         MessageKey::StatsLess => "Moins",
         MessageKey::StatsMore => "Plus",
+        MessageKey::StatsCacheHitShort => "Hits cache :",
+        MessageKey::StatsCacheHitRate => "Taux de cache :",
+        MessageKey::StatsBurnShort => "Brûlé (7j) :",
+        MessageKey::StatsBurnRate => "Rythme (7j) :",
+        MessageKey::StatsProjShort => "Proj (30j) :",
+        MessageKey::StatsProjection => "Projection 30j :",
 
         MessageKey::DialogCurrentLabel => "Actuel : ",
         MessageKey::DialogCancel => "[ Annuler ]",
@@ -2830,6 +2884,7 @@ mod tests {
             MessageKey::TabProjects,
             MessageKey::TabStats,
             MessageKey::TabAgents,
+            MessageKey::TabClients,
             MessageKey::TabOverviewShort,
             MessageKey::TabUsageShort,
             MessageKey::TabModelsShort,
@@ -2841,6 +2896,7 @@ mod tests {
             MessageKey::TabProjectsShort,
             MessageKey::TabStatsShort,
             MessageKey::TabAgentsShort,
+            MessageKey::TabClientsShort,
             MessageKey::ColDate,
             MessageKey::ColCost,
             MessageKey::ColTokens,
@@ -2892,6 +2948,7 @@ mod tests {
             MessageKey::CountMonths,
             MessageKey::CountSessions,
             MessageKey::CountProjects,
+            MessageKey::CountClients,
             MessageKey::SortLabel,
             MessageKey::SortDate,
             MessageKey::SortCost,

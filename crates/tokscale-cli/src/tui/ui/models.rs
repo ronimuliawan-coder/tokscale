@@ -2,11 +2,11 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::widgets::{
-    fit_workspace_label_to_width, format_cache_hit_rate, format_cost, format_cost_per_million,
-    format_ms_per_1k, format_tokens, get_client_display_name, get_provider_display_name,
+    fit_workspace_label_to_width, format_cost, format_cost_per_million, format_ms_per_1k,
+    format_tokens, get_client_color, get_client_display_name, get_provider_display_name,
     total_tokens_cell, truncate_text, truncate_to_width, viewport_scrollbar_state,
 };
-use crate::tui::app::{App, SortDirection, SortField};
+use crate::tui::app::{App, ModelDetailViewType, SortDirection, SortField};
 use crate::tui::i18n::{tr, MessageKey, TuiLanguage};
 use tokscale_core::GroupBy;
 
@@ -247,11 +247,23 @@ pub(super) fn model_display_name(
 }
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.is_model_detail_view_active() {
+        render_model_detail(frame, app, area);
+        return;
+    }
     if app.is_model_trend_active() {
         super::model_trend::render(frame, app, area);
         return;
     }
 
+    render_table(frame, app, area);
+
+    if app.is_model_detail_menu_active() {
+        render_options_menu(frame, app, area);
+    }
+}
+
+fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let lang = app.settings.tui_language;
     let block = Block::default()
         .borders(Borders::ALL)
@@ -451,11 +463,10 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                         .style(metric_cache_read_style),
                     Cell::from(format_tokens(model.tokens.cache_write))
                         .style(metric_cache_write_style),
-                    Cell::from(format_cache_hit_rate(
+                    Cell::from(app.format_cache(
                         model.tokens.cache_read,
                         model.tokens.input,
                         model.tokens.cache_write,
-                        app.glyphs,
                     ))
                     .style(app.theme.count_style()),
                     total_tokens_cell(model.tokens.total(), &app.theme),
@@ -500,6 +511,1569 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut scrollbar_state =
             viewport_scrollbar_state(models_len, scroll_offset, visible_height);
 
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_options_menu(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(ref state) = app.model_detail else {
+        return;
+    };
+    let model_name = &state.model_name;
+    let model_color = app.model_color_for(&state.provider, &state.color_key);
+
+    let dialog_area = crate::tui::ui::dialog::overlay::centered_rect(area, 62, 17);
+    crate::tui::ui::dialog::overlay::render_dialog_surface(frame, dialog_area, &app.theme);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Span::styled(
+            format!(" Details for {} ", truncate_text(model_name, 36)),
+            Style::default()
+                .fg(model_color)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(10),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let subtitle_text = if !state.provider.is_empty() {
+        format!("Provider: {} • Select breakdown:", state.provider)
+    } else {
+        "Select detail breakdown to inspect:".to_string()
+    };
+    let subtitle = Paragraph::new(subtitle_text).style(Style::default().fg(app.theme.muted));
+    frame.render_widget(subtitle, chunks[0]);
+
+    let options = ModelDetailViewType::ALL;
+    let mut lines = Vec::new();
+    for (i, opt) in options.iter().enumerate() {
+        let is_selected = i == state.menu_cursor;
+        let prefix = if is_selected { " ▸ " } else { "   " };
+        let num = format!("[{}] ", i + 1);
+
+        let opt_style = if is_selected {
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.foreground)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(app.theme.accent)),
+            Span::styled(num, Style::default().fg(app.theme.muted)),
+            Span::styled(opt.as_str(), opt_style),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::raw("       "),
+            Span::styled(opt.description(), Style::default().fg(app.theme.muted)),
+        ]));
+    }
+
+    let list_paragraph = Paragraph::new(lines);
+    frame.render_widget(list_paragraph, chunks[2]);
+
+    let hint = Line::from(vec![
+        Span::styled("↑↓/1-5:navigate", Style::default().fg(app.theme.muted)),
+        Span::styled(
+            app.glyphs.spaced_separator,
+            Style::default().fg(app.theme.muted),
+        ),
+        Span::styled("↵:view", Style::default().fg(app.theme.accent)),
+        Span::styled(
+            app.glyphs.spaced_separator,
+            Style::default().fg(app.theme.muted),
+        ),
+        Span::styled("esc:cancel", Style::default().fg(app.theme.muted)),
+    ]);
+    let footer_paragraph = Paragraph::new(hint).alignment(Alignment::Center);
+    frame.render_widget(footer_paragraph, chunks[3]);
+}
+
+fn render_model_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let Some(ref state) = app.model_detail else {
+        return;
+    };
+    let Some(view_type) = state.active_view else {
+        return;
+    };
+    let model_name = state.model_name.clone();
+    let group_key = state.group_key.clone();
+
+    match view_type {
+        ModelDetailViewType::Daily => render_model_daily(frame, app, area, &model_name, &group_key),
+        ModelDetailViewType::Hourly => render_model_hourly(frame, app, area, &model_name),
+        ModelDetailViewType::Clients => render_model_clients(frame, app, area, &model_name),
+        ModelDetailViewType::Sessions => render_model_sessions(frame, app, area, &model_name),
+        ModelDetailViewType::Monthly => {
+            render_model_monthly(frame, app, area, &model_name, &group_key)
+        }
+    }
+}
+
+fn render_model_daily(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    model_name: &str,
+    group_key: &str,
+) {
+    let title = format!(" Model Detail: {} (Daily) ", model_name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows_data = app.get_model_daily_rows_scoped(model_name, group_key);
+    let visible_height = inner.height.saturating_sub(2) as usize;
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
+
+    if rows_data.is_empty() {
+        let empty_msg = Paragraph::new("No daily usage found for this model.")
+            .style(Style::default().fg(app.theme.muted))
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
+    let cache_hdr = app.cache_hit_header();
+
+    let header_cells = if is_very_narrow {
+        vec!["Date", "Cost"]
+    } else if is_narrow {
+        vec!["Date", "Tokens", "Cost"]
+    } else {
+        vec![
+            "#", "Date", "Tokens", "Input", "Output", "Cache R", "Cache W", cache_hdr, "Cost",
+            "Cost/1M", "Msgs",
+        ]
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .map(|h| Cell::from(*h))
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let rows_len = rows_data.len();
+    let start = scroll_offset.min(rows_len.saturating_sub(1));
+    let end = (start + visible_height).min(rows_len);
+
+    if start >= rows_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+
+            let total_tokens = row.tokens.total();
+            let cache_str = app.format_cache(
+                row.tokens.cache_read,
+                row.tokens.input,
+                row.tokens.cache_write,
+            );
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(row.date.format("%Y-%m-%d").to_string())
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(row.date.format("%Y-%m-%d").to_string())
+                        .style(Style::default().fg(theme_accent)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(row.date.format("%Y-%m-%d").to_string())
+                        .style(Style::default().fg(theme_accent)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_tokens(row.tokens.input))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.output))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_read))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_write))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(format_cost_per_million(row.cost, total_tokens, app.glyphs))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()).style(Style::default().fg(theme_muted)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(theme_selection)
+                    .fg(app.theme.foreground)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else if is_narrow {
+        vec![
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
+        ]
+    };
+
+    let total_cost: f64 = rows_data.iter().map(|r| r.cost).sum();
+    let total_tokens: u64 = rows_data.iter().map(|r| r.tokens.total()).sum();
+    let total_input: u64 = rows_data.iter().map(|r| r.tokens.input).sum();
+    let total_output: u64 = rows_data.iter().map(|r| r.tokens.output).sum();
+    let total_cache_read: u64 = rows_data.iter().map(|r| r.tokens.cache_read).sum();
+    let total_cache_write: u64 = rows_data.iter().map(|r| r.tokens.cache_write).sum();
+    let total_messages: u64 = rows_data.iter().map(|r| r.messages).sum();
+
+    let totals_cache_str = app.format_cache(total_cache_read, total_input, total_cache_write);
+
+    let totals_row = if is_very_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else if is_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_tokens(total_input)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_output)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_read)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_write)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(totals_cache_str).style(
+                Style::default()
+                    .fg(app.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
+            Cell::from(total_messages.to_string()).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    }
+    .style(Style::default())
+    .height(1);
+
+    let table_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let table = Table::new(rows, widths.clone())
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, table_layout[0]);
+
+    let totals_table = Table::new(vec![totals_row], widths).column_spacing(1);
+    frame.render_widget(totals_table, table_layout[1]);
+
+    if rows_len > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
+        let scrollbar = app.glyphs.scrollbar();
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name: &str) {
+    let title = format!(" Model Detail: {} (Hourly) ", model_name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows_data = app.get_model_hourly_rows(model_name);
+    let visible_height = inner.height.saturating_sub(2) as usize;
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
+
+    if rows_data.is_empty() {
+        let empty_msg = Paragraph::new("No hourly usage found for this model.")
+            .style(Style::default().fg(app.theme.muted))
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
+    let cache_hdr = app.cache_hit_header();
+
+    let header_cells = if is_very_narrow {
+        vec!["Time", "Cost"]
+    } else if is_narrow {
+        vec!["Time", "Source", "Cost"]
+    } else {
+        vec![
+            "#",
+            "Timestamp",
+            "Source",
+            "Tokens",
+            "Input",
+            "Output",
+            "Cache R",
+            "Cache W",
+            cache_hdr,
+            "Cost",
+            "Cost/1M",
+            "Msgs",
+        ]
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .map(|h| Cell::from(*h))
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let rows_len = rows_data.len();
+    let start = scroll_offset.min(rows_len.saturating_sub(1));
+    let end = (start + visible_height).min(rows_len);
+
+    if start >= rows_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+
+            let total_tokens = row.tokens.total();
+            let source_color = get_client_color(&row.source);
+            let cache_str = app.format_cache(
+                row.tokens.cache_read,
+                row.tokens.input,
+                row.tokens.cache_write,
+            );
+
+            let time_str = row.datetime.format("%Y-%m-%d %H:00").to_string();
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(row.datetime.format("%m-%d %H:00").to_string())
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(row.datetime.format("%m-%d %H:00").to_string())
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(truncate_text(&row.source, 12))
+                        .style(Style::default().fg(source_color)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(time_str).style(Style::default().fg(theme_accent)),
+                    Cell::from(truncate_text(&row.source, 14))
+                        .style(Style::default().fg(source_color)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_tokens(row.tokens.input))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.output))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_read))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_write))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(format_cost_per_million(row.cost, total_tokens, app.glyphs))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()).style(Style::default().fg(theme_muted)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(theme_selection)
+                    .fg(app.theme.foreground)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else if is_narrow {
+        vec![
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    } else if inner.width < 125 {
+        // Mid tier: the wide layout needs ~125 columns and clips at 80-124.
+        // Give the 16-character timestamp its full width, drop the trailing
+        // messages column, and shrink the metrics.
+        vec![
+            Constraint::Length(2),
+            Constraint::Length(16),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Length(7),
+            Constraint::Length(7),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(16),
+            Constraint::Length(14),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(6),
+        ]
+    };
+
+    let total_cost: f64 = rows_data.iter().map(|r| r.cost).sum();
+    let total_tokens: u64 = rows_data.iter().map(|r| r.tokens.total()).sum();
+    let total_input: u64 = rows_data.iter().map(|r| r.tokens.input).sum();
+    let total_output: u64 = rows_data.iter().map(|r| r.tokens.output).sum();
+    let total_cache_read: u64 = rows_data.iter().map(|r| r.tokens.cache_read).sum();
+    let total_cache_write: u64 = rows_data.iter().map(|r| r.tokens.cache_write).sum();
+    let total_messages: u64 = rows_data.iter().map(|r| r.messages).sum();
+    let totals_cache_str = app.format_cache(total_cache_read, total_input, total_cache_write);
+
+    let totals_row = if is_very_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else if is_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(""),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(""),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_tokens(total_input)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_output)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_read)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_write)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(totals_cache_str).style(
+                Style::default()
+                    .fg(app.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
+            Cell::from(total_messages.to_string()).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    }
+    .style(Style::default())
+    .height(1);
+
+    let table_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let table = Table::new(rows, widths.clone())
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, table_layout[0]);
+
+    let totals_table = Table::new(vec![totals_row], widths).column_spacing(1);
+    frame.render_widget(totals_table, table_layout[1]);
+
+    if rows_len > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
+        let scrollbar = app.glyphs.scrollbar();
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_model_clients(frame: &mut Frame, app: &mut App, area: Rect, model_name: &str) {
+    let title = format!(" Model Detail: {} (Clients / Sources) ", model_name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows_data = app.get_model_client_rows(model_name);
+    let visible_height = inner.height.saturating_sub(2) as usize;
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
+
+    if rows_data.is_empty() {
+        let empty_msg = Paragraph::new("No clients found for this model.")
+            .style(Style::default().fg(app.theme.muted))
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
+    let cache_hdr = app.cache_hit_header();
+
+    let header_cells = if is_very_narrow {
+        vec!["Client", "Cost"]
+    } else if is_narrow {
+        vec!["Client", "Tokens", "Cost"]
+    } else {
+        vec![
+            "#", "Client", "Share", "Tokens", "Input", "Output", "Cache R", "Cache W", cache_hdr,
+            "Cost", "Cost/1M", "Msgs",
+        ]
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .map(|h| Cell::from(*h))
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let rows_len = rows_data.len();
+    let start = scroll_offset.min(rows_len.saturating_sub(1));
+    let end = (start + visible_height).min(rows_len);
+
+    if start >= rows_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+
+            let total_tokens = row.tokens.total();
+            let client_color = get_client_color(&row.client);
+            let cache_str = app.format_cache(
+                row.tokens.cache_read,
+                row.tokens.input,
+                row.tokens.cache_write,
+            );
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(truncate_text(&row.display_name, 18))
+                        .style(Style::default().fg(client_color)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(truncate_text(&row.display_name, 18))
+                        .style(Style::default().fg(client_color)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(truncate_text(&row.display_name, 22)).style(
+                        Style::default()
+                            .fg(client_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(format!("{:.1}%", row.token_share))
+                        .style(Style::default().fg(theme_muted)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_tokens(row.tokens.input))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.output))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_read))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_write))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(format_cost_per_million(row.cost, total_tokens, app.glyphs))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()).style(Style::default().fg(theme_muted)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(theme_selection)
+                    .fg(app.theme.foreground)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else if is_narrow {
+        vec![
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(22),
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(6),
+        ]
+    };
+
+    let total_cost: f64 = rows_data.iter().map(|r| r.cost).sum();
+    let total_tokens: u64 = rows_data.iter().map(|r| r.tokens.total()).sum();
+    let total_input: u64 = rows_data.iter().map(|r| r.tokens.input).sum();
+    let total_output: u64 = rows_data.iter().map(|r| r.tokens.output).sum();
+    let total_cache_read: u64 = rows_data.iter().map(|r| r.tokens.cache_read).sum();
+    let total_cache_write: u64 = rows_data.iter().map(|r| r.tokens.cache_write).sum();
+    let total_messages: u64 = rows_data.iter().map(|r| r.messages).sum();
+    let totals_cache_str = app.format_cache(total_cache_read, total_input, total_cache_write);
+
+    let totals_row = if is_very_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else if is_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from("100.0%").style(Style::default().fg(theme_muted)),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_tokens(total_input)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_output)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_read)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_write)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(totals_cache_str).style(
+                Style::default()
+                    .fg(app.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
+            Cell::from(total_messages.to_string()).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    }
+    .style(Style::default())
+    .height(1);
+
+    let table_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let table = Table::new(rows, widths.clone())
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, table_layout[0]);
+
+    let totals_table = Table::new(vec![totals_row], widths).column_spacing(1);
+    frame.render_widget(totals_table, table_layout[1]);
+
+    if rows_len > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
+        let scrollbar = app.glyphs.scrollbar();
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_model_sessions(frame: &mut Frame, app: &mut App, area: Rect, model_name: &str) {
+    let title = format!(" Model Detail: {} (Sessions) ", model_name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows_data = app.get_model_session_rows(model_name);
+    let visible_height = inner.height.saturating_sub(2) as usize;
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
+
+    if rows_data.is_empty() {
+        let empty_msg = Paragraph::new("No sessions found using this model.")
+            .style(Style::default().fg(app.theme.muted))
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
+    let cache_hdr = app.cache_hit_header();
+
+    let header_cells = if is_very_narrow {
+        vec!["Session", "Cost"]
+    } else if is_narrow {
+        vec!["Session", "Client", "Cost"]
+    } else {
+        vec![
+            "#",
+            "Session ID",
+            "Client",
+            "Title",
+            "Tokens",
+            "Input",
+            "Output",
+            "Cache R",
+            cache_hdr,
+            "Cost",
+            "Msgs",
+            "Last Active",
+        ]
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .map(|h| Cell::from(*h))
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let rows_len = rows_data.len();
+    let start = scroll_offset.min(rows_len.saturating_sub(1));
+    let end = (start + visible_height).min(rows_len);
+
+    if start >= rows_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+
+            let total_tokens = row.tokens.total();
+            let client_color = get_client_color(&row.client);
+            let cache_str = app.format_cache(
+                row.tokens.cache_read,
+                row.tokens.input,
+                row.tokens.cache_write,
+            );
+
+            let last_active = if row.last_active_ms > 0 {
+                chrono::DateTime::from_timestamp_millis(row.last_active_ms)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| app.glyphs.missing.to_string())
+            } else {
+                app.glyphs.missing.to_string()
+            };
+
+            let title_display = row.title.as_deref().unwrap_or(app.glyphs.missing);
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(truncate_text(&row.session_id, 14))
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(truncate_text(&row.session_id, 14))
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(truncate_text(&row.client, 12))
+                        .style(Style::default().fg(client_color)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(truncate_text(&row.session_id, 14))
+                        .style(Style::default().fg(theme_accent)),
+                    Cell::from(truncate_text(&row.client, 12))
+                        .style(Style::default().fg(client_color)),
+                    Cell::from(truncate_text(title_display, 24))
+                        .style(Style::default().fg(app.theme.foreground)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_tokens(row.tokens.input))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.output))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_read))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(row.messages.to_string()).style(Style::default().fg(theme_muted)),
+                    Cell::from(last_active).style(Style::default().fg(theme_muted)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(theme_selection)
+                    .fg(app.theme.foreground)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else if is_narrow {
+        vec![
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(14),
+            Constraint::Length(12),
+            Constraint::Min(20),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(6),
+            Constraint::Length(16),
+        ]
+    };
+
+    let total_cost: f64 = rows_data.iter().map(|r| r.cost).sum();
+    let total_tokens: u64 = rows_data.iter().map(|r| r.tokens.total()).sum();
+    let total_input: u64 = rows_data.iter().map(|r| r.tokens.input).sum();
+    let total_output: u64 = rows_data.iter().map(|r| r.tokens.output).sum();
+    let total_cache_read: u64 = rows_data.iter().map(|r| r.tokens.cache_read).sum();
+    let total_cache_write: u64 = rows_data.iter().map(|r| r.tokens.cache_write).sum();
+    let total_messages: u64 = rows_data.iter().map(|r| r.messages as u64).sum();
+    let totals_cache_str = app.format_cache(total_cache_read, total_input, total_cache_write);
+
+    let totals_row = if is_very_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else if is_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(""),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(""),
+            Cell::from(format!("{} sessions", rows_len)).style(Style::default().fg(theme_muted)),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_tokens(total_input)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_output)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_read)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(totals_cache_str).style(
+                Style::default()
+                    .fg(app.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(total_messages.to_string()).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(""),
+        ])
+    }
+    .style(Style::default())
+    .height(1);
+
+    let table_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let table = Table::new(rows, widths.clone())
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, table_layout[0]);
+
+    let totals_table = Table::new(vec![totals_row], widths).column_spacing(1);
+    frame.render_widget(totals_table, table_layout[1]);
+
+    if rows_len > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
+        let scrollbar = app.glyphs.scrollbar();
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_model_monthly(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    model_name: &str,
+    group_key: &str,
+) {
+    let title = format!(" Model Detail: {} (Monthly) ", model_name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows_data = app.get_model_monthly_rows(model_name, group_key);
+    let visible_height = inner.height.saturating_sub(2) as usize;
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
+
+    if rows_data.is_empty() {
+        let empty_msg = Paragraph::new("No monthly usage found for this model.")
+            .style(Style::default().fg(app.theme.muted))
+            .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let striped_row_style = app.theme.striped_row_style();
+    let cache_hdr = app.cache_hit_header();
+
+    let header_cells = if is_very_narrow {
+        vec!["Month", "Cost"]
+    } else if is_narrow {
+        vec!["Month", "Tokens", "Cost"]
+    } else {
+        vec![
+            "#", "Month", "Tokens", "Input", "Output", "Cache R", "Cache W", cache_hdr, "Cost",
+            "Cost/1M", "Msgs",
+        ]
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .map(|h| Cell::from(*h))
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let rows_len = rows_data.len();
+    let start = scroll_offset.min(rows_len.saturating_sub(1));
+    let end = (start + visible_height).min(rows_len);
+
+    if start >= rows_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+
+            let total_tokens = row.tokens.total();
+            let cache_str = app.format_cache(
+                row.tokens.cache_read,
+                row.tokens.input,
+                row.tokens.cache_write,
+            );
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(row.month.clone()).style(Style::default().fg(theme_accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(row.month.clone()).style(Style::default().fg(theme_accent)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(row.month.clone()).style(Style::default().fg(theme_accent)),
+                    total_tokens_cell(total_tokens, &app.theme),
+                    Cell::from(format_tokens(row.tokens.input))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.output))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_read))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_tokens(row.tokens.cache_write))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                    Cell::from(format_cost_per_million(row.cost, total_tokens, app.glyphs))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()).style(Style::default().fg(theme_muted)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(theme_selection)
+                    .fg(app.theme.foreground)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else if is_narrow {
+        vec![
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
+        ]
+    };
+
+    let total_cost: f64 = rows_data.iter().map(|r| r.cost).sum();
+    let total_tokens: u64 = rows_data.iter().map(|r| r.tokens.total()).sum();
+    let total_input: u64 = rows_data.iter().map(|r| r.tokens.input).sum();
+    let total_output: u64 = rows_data.iter().map(|r| r.tokens.output).sum();
+    let total_cache_read: u64 = rows_data.iter().map(|r| r.tokens.cache_read).sum();
+    let total_cache_write: u64 = rows_data.iter().map(|r| r.tokens.cache_write).sum();
+    let total_messages: u64 = rows_data.iter().map(|r| r.messages).sum();
+    let totals_cache_str = app.format_cache(total_cache_read, total_input, total_cache_write);
+
+    let totals_row = if is_very_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else if is_narrow {
+        Row::new(vec![
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from("Total").style(
+                Style::default()
+                    .fg(theme_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            total_tokens_cell(total_tokens, &app.theme),
+            Cell::from(format_tokens(total_input)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_output)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_read)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_tokens(total_cache_write)).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(totals_cache_str).style(
+                Style::default()
+                    .fg(app.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost(total_cost)).style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
+            Cell::from(total_messages.to_string()).style(
+                Style::default()
+                    .fg(theme_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    }
+    .style(Style::default())
+    .height(1);
+
+    let table_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let table = Table::new(rows, widths.clone())
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, table_layout[0]);
+
+    let totals_table = Table::new(vec![totals_row], widths).column_spacing(1);
+    frame.render_widget(totals_table, table_layout[1]);
+
+    if rows_len > visible_height {
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
+        let scrollbar = app.glyphs.scrollbar();
         frame.render_stateful_widget(
             scrollbar,
             area.inner(Margin {
@@ -1012,5 +2586,150 @@ mod tests {
             "steven / gpt-5.4"
         );
         assert_eq!(model_display_name(&row, &GroupBy::Model), "gpt-5.4");
+    }
+
+    #[test]
+    fn test_model_detail_renders_options_menu() {
+        use crate::tui::app::{Tab, TuiConfig};
+        use crate::tui::data::ModelUsage;
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = App::new_with_cached_data(
+            TuiConfig {
+                theme: "blue".to_string(),
+                refresh: 0,
+                sessions_path: None,
+                clients: None,
+                since: None,
+                until: None,
+                year: None,
+                initial_tab: None,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+
+        let width = 120u16;
+        let height = 30u16;
+        app.terminal_width = width;
+        app.current_tab = Tab::Models;
+        app.data.models = vec![ModelUsage {
+            model: "gpt-4o".to_string(),
+            color_key: "gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            client: "cli".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            machine: None,
+            tokens: Default::default(),
+            cost: 10.0,
+            performance: Default::default(),
+            session_count: 1,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+
+        app.open_selected_model_detail_menu();
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &mut app, Rect::new(0, 0, width, height)))
+            .unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("Details for gpt-4o"), "got:\n{screen}");
+        assert!(screen.contains("Daily Usage"), "got:\n{screen}");
+        assert!(screen.contains("Hourly Usage"), "got:\n{screen}");
+        assert!(screen.contains("Clients / Sources"), "got:\n{screen}");
+        assert!(screen.contains("Sessions"), "got:\n{screen}");
+        assert!(screen.contains("Monthly Usage"), "got:\n{screen}");
+    }
+
+    #[test]
+    fn test_model_detail_renders_all_views() {
+        use crate::tui::app::{ModelDetailViewType, Tab, TuiConfig};
+        use crate::tui::data::ModelUsage;
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = App::new_with_cached_data(
+            TuiConfig {
+                theme: "blue".to_string(),
+                refresh: 0,
+                sessions_path: None,
+                clients: None,
+                since: None,
+                until: None,
+                year: None,
+                initial_tab: None,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+
+        let width = 140u16;
+        let height = 30u16;
+        app.terminal_width = width;
+        app.current_tab = Tab::Models;
+        app.data.models = vec![ModelUsage {
+            model: "gpt-4o".to_string(),
+            color_key: "gpt-4o".to_string(),
+            provider: "openai".to_string(),
+            client: "cli".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            machine: None,
+            tokens: Default::default(),
+            cost: 10.0,
+            performance: Default::default(),
+            session_count: 1,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+
+        app.open_selected_model_detail_menu();
+
+        for view_type in [
+            ModelDetailViewType::Daily,
+            ModelDetailViewType::Hourly,
+            ModelDetailViewType::Clients,
+            ModelDetailViewType::Sessions,
+            ModelDetailViewType::Monthly,
+        ] {
+            if let Some(ref mut state) = app.model_detail {
+                state.active_view = Some(view_type);
+            }
+
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render(frame, &mut app, Rect::new(0, 0, width, height)))
+                .unwrap();
+
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content()
+                .chunks(width as usize)
+                .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(
+                screen.contains("Model Detail: gpt-4o"),
+                "view {:?} failed, got:\n{screen}",
+                view_type
+            );
+        }
     }
 }

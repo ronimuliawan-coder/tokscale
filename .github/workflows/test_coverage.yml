@@ -27,7 +27,7 @@ concurrency:
 jobs:
   tui-startup-macos:
     name: TUI startup (macOS)
-    runs-on: macos-latest
+    runs-on: nscloud-macos-tahoe-arm64-6x14
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -53,7 +53,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-24.04-amd64-4x8
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -80,7 +80,7 @@ jobs:
 
   rustdoc:
     name: Rustdoc
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-24.04-amd64-4x8
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -157,7 +157,7 @@ jobs:
       # information when triaging.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [nscloud-ubuntu-24.04-amd64-4x8, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -190,7 +190,7 @@ jobs:
   coverage:
     name: Coverage Report
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-24.04-amd64-4x8
     permissions:
       contents: write
 

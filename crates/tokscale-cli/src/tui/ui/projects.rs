@@ -585,6 +585,9 @@ mod tests {
                 display_name: "claude-sonnet-4".to_string(),
                 provider: "anthropic".to_string(),
                 color_key: "claude-sonnet-4".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             }],
             tokens: TokenBreakdown {
                 input: 1_234_567,
@@ -977,6 +980,9 @@ mod tests {
                 display_name: name.to_string(),
                 provider: "openai".to_string(),
                 color_key: name.to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             })
             .collect::<Vec<_>>();
         let area = Rect::new(0, 0, width, 1);

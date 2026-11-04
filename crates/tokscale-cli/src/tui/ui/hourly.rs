@@ -6,8 +6,9 @@ use tokscale_core::GroupBy;
 
 use super::hourly_profile;
 use super::widgets::{
-    format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
-    period_source_header, total_tokens_cell, viewport_scrollbar_state,
+    format_cost, format_cost_per_million, format_tokens, get_client_display_name,
+    get_provider_display_name, period_source_header, total_tokens_cell, truncate_text,
+    viewport_scrollbar_state,
 };
 use crate::tui::app::{App, HourlyViewMode, SortDirection, SortField};
 use crate::tui::i18n::{tr, MessageKey, TuiLanguage};
@@ -108,6 +109,11 @@ fn header_widths(is_narrow: bool, is_very_narrow: bool, has_turn_data: bool) -> 
 }
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.is_hourly_detail_active() {
+        render_detail(frame, app, area);
+        return;
+    }
+
     match app.hourly_view_mode {
         HourlyViewMode::Table => render_table(frame, app, area),
         HourlyViewMode::Profile => hourly_profile::render(frame, app, area),
@@ -140,8 +146,8 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     // are kept valid by the nav handlers and update_data(); a resize only ever
     // shrinks the window from the same start, which stays in-bounds.
 
-    let hourly = app.get_sorted_hourly();
-    if hourly.is_empty() {
+    let hourly_rows = app.get_sorted_hourly_rows();
+    if hourly_rows.is_empty() {
         let empty_msg = Paragraph::new(tr(lang, MessageKey::EmptyNoHourlyData))
             .style(Style::default().fg(app.theme.muted))
             .alignment(Alignment::Center);
@@ -151,7 +157,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let is_narrow = app.is_narrow();
     let is_very_narrow = app.is_very_narrow();
-    let has_turn_data = hourly.iter().any(|h| h.turn_count > 0);
+    let has_turn_data = hourly_rows.iter().any(|h| h.turn_count > 0);
     let sort_field = app.sort_field;
     let sort_direction = app.sort_direction;
     let scroll_offset = app.scroll_offset;
@@ -222,7 +228,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     // + separators) rather than slicing a fixed data-row count, then report the
     // actual data rows shown via `max_visible_items` so paging/scroll stay in
     // sync.
-    let hourly_len = hourly.len();
+    let hourly_len = hourly_rows.len();
     let start = scroll_offset.min(hourly_len);
     if start >= hourly_len {
         return;
@@ -248,8 +254,8 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut data_idx = start;
 
     while data_idx < hourly_len && lines_used < visible_height {
-        let hour = &hourly[data_idx];
-        let row_date = hour.datetime.date();
+        let row_data = &hourly_rows[data_idx];
+        let row_date = row_data.datetime.date();
 
         // Separator at the window top (prev_date == None) and at each day
         // change. When only one line remains it cannot share the line budget
@@ -273,17 +279,26 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         let idx = data_idx;
         let is_selected = idx == selected_index;
         let is_striped = idx % 2 == 1;
-        let is_current = hour.datetime == current_hour;
+        let is_current = row_data.datetime == current_hour;
 
-        let clients_str: String = {
-            let mut c: Vec<&str> = hour.clients.iter().map(String::as_str).collect();
+        let source_str: String = if let Some(src) = row_data.source {
+            get_client_display_name(src)
+        } else {
+            let mut c: Vec<String> = row_data
+                .hour
+                .clients
+                .iter()
+                .map(|s| get_client_display_name(s.as_str()))
+                .collect();
             c.sort();
             c.join(", ")
         };
 
-        let time_str = hour.datetime.format("%H:00").to_string();
+        let time_str = row_data.datetime.format("%H:00").to_string();
         let time_style = if is_current {
             app.theme.hint_key_style().add_modifier(Modifier::BOLD)
+        } else if row_data.is_continuation {
+            Style::default().fg(app.theme.muted)
         } else if !is_narrow && !is_very_narrow {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
@@ -293,48 +308,49 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         let cells: Vec<Cell> = if is_very_narrow {
             vec![
                 Cell::from(time_str).style(time_style),
-                Cell::from(format_cost(hour.cost)).style(Style::default().fg(Color::Green)),
+                Cell::from(format_cost(row_data.cost)).style(Style::default().fg(Color::Green)),
             ]
         } else if is_narrow {
             let mut cells = vec![
                 Cell::from(time_str).style(time_style),
-                Cell::from(clients_str),
+                Cell::from(source_str),
             ];
             if has_turn_data {
-                cells.push(Cell::from(turn_cell(hour.turn_count)));
+                cells.push(Cell::from(turn_cell(row_data.turn_count)));
             }
             cells.extend([
-                Cell::from(hour.message_count.to_string()),
-                total_tokens_cell(hour.tokens.total(), &app.theme),
-                Cell::from(format_cost(hour.cost)).style(Style::default().fg(Color::Green)),
+                Cell::from(row_data.message_count.to_string()),
+                total_tokens_cell(row_data.tokens.total(), &app.theme),
+                Cell::from(format_cost(row_data.cost)).style(Style::default().fg(Color::Green)),
             ]);
             cells
         } else {
             let mut cells = vec![
                 Cell::from(time_str).style(time_style),
-                Cell::from(clients_str),
+                Cell::from(source_str),
             ];
             if has_turn_data {
-                cells.push(Cell::from(turn_cell(hour.turn_count)));
+                cells.push(Cell::from(turn_cell(row_data.turn_count)));
             }
             cells.extend([
-                Cell::from(hour.message_count.to_string()),
-                Cell::from(format_tokens(hour.tokens.input)).style(metric_input_style),
-                Cell::from(format_tokens(hour.tokens.output)).style(metric_output_style),
-                Cell::from(format_tokens(hour.tokens.cache_read)).style(metric_cache_read_style),
-                Cell::from(format_tokens(hour.tokens.cache_write)).style(metric_cache_write_style),
-                Cell::from(format_cache_hit_rate(
-                    hour.tokens.cache_read,
-                    hour.tokens.input,
-                    hour.tokens.cache_write,
-                    app.glyphs,
+                Cell::from(row_data.message_count.to_string()),
+                Cell::from(format_tokens(row_data.tokens.input)).style(metric_input_style),
+                Cell::from(format_tokens(row_data.tokens.output)).style(metric_output_style),
+                Cell::from(format_tokens(row_data.tokens.cache_read))
+                    .style(metric_cache_read_style),
+                Cell::from(format_tokens(row_data.tokens.cache_write))
+                    .style(metric_cache_write_style),
+                Cell::from(app.format_cache(
+                    row_data.tokens.cache_read,
+                    row_data.tokens.input,
+                    row_data.tokens.cache_write,
                 ))
                 .style(app.theme.count_style()),
-                total_tokens_cell(hour.tokens.total(), &app.theme),
-                Cell::from(format_cost(hour.cost)).style(Style::default().fg(Color::Green)),
+                total_tokens_cell(row_data.tokens.total(), &app.theme),
+                Cell::from(format_cost(row_data.cost)).style(Style::default().fg(Color::Green)),
                 Cell::from(format_cost_per_million(
-                    hour.cost,
-                    hour.tokens.total(),
+                    row_data.cost,
+                    row_data.tokens.total(),
                     app.glyphs,
                 ))
                 .style(Style::default().fg(Color::Rgb(150, 200, 150))),
@@ -358,7 +374,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Effective data rows shown (separators excluded) drives paging & scroll on
-    // the next frame. `hourly` is no longer borrowed past this point, so the
+    // the next frame. `hourly_rows` is no longer borrowed past this point, so the
     // mutable field write is sound.
     let data_rows_shown = data_idx - start;
     app.set_max_visible_items(data_rows_shown.max(1));
@@ -376,6 +392,275 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
 
         let mut scrollbar_state =
             viewport_scrollbar_state(hourly_len, scroll_offset, data_rows_shown);
+
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                horizontal: 0,
+                vertical: 1,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let title = app
+        .hourly_detail_dt()
+        .map(|dt| format!(" Hourly Detail: {} ", dt.format("%Y-%m-%d %H:00")))
+        .unwrap_or_else(|| " Hourly Detail ".to_string());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(app.glyphs.border)
+        .border_style(Style::default().fg(app.theme.border))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.background));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let visible_height = inner.height.saturating_sub(1) as usize;
+    app.set_max_visible_items(visible_height);
+
+    let rows_data = app.get_sorted_hourly_detail_rows();
+    if rows_data.is_empty() {
+        let empty_msg =
+            Paragraph::new("No model details found for this hour. Press Esc to go back.")
+                .style(Style::default().fg(app.theme.muted))
+                .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, inner);
+        return;
+    }
+
+    let is_narrow = app.is_narrow();
+    let is_very_narrow = app.is_very_narrow();
+    let sort_field = app.sort_field;
+    let sort_direction = app.sort_direction;
+    let scroll_offset = app.scroll_offset;
+    let selected_index = app.selected_index;
+    let theme_accent = app.theme.accent;
+    let theme_muted = app.theme.muted;
+    let theme_selection = app.theme.selection;
+    let metric_input_style = app.theme.metric_input_style();
+    let metric_output_style = app.theme.metric_output_style();
+    let metric_cache_read_style = app.theme.metric_cache_read_style();
+    let metric_cache_write_style = app.theme.metric_cache_write_style();
+    let striped_row_style = app.theme.striped_row_style();
+
+    // Mid tier (80-139 cols): the wide layout needs ~141 columns and clips;
+    // drop the provider column so rows fit.
+    let drop_provider = !is_narrow && !is_very_narrow && inner.width < 141;
+
+    let mut header_cells = if is_very_narrow {
+        vec!["Model", "Cost"]
+    } else if is_narrow {
+        vec!["Model", "Source", "Msgs", "Tokens", "Cost"]
+    } else {
+        vec![
+            "#",
+            "Model",
+            "Provider",
+            "Source",
+            "Msgs",
+            "Input",
+            "Output",
+            "Cache R",
+            "Cache W",
+            app.cache_hit_header(),
+            "Total",
+            "Cost",
+        ]
+    };
+    if drop_provider {
+        header_cells.remove(2);
+    };
+
+    let sort_indicator = |field: SortField| -> &'static str {
+        if sort_field == field {
+            match sort_direction {
+                SortDirection::Ascending => " ▴",
+                SortDirection::Descending => " ▾",
+            }
+        } else {
+            ""
+        }
+    };
+
+    let header = Row::new(
+        header_cells
+            .iter()
+            .enumerate()
+            .map(|(i, h)| {
+                let indicator = match (i, is_narrow, is_very_narrow) {
+                    (10, false, false) if !drop_provider => sort_indicator(SortField::Tokens),
+                    (11, false, false) if !drop_provider => sort_indicator(SortField::Cost),
+                    (9, false, false) if drop_provider => sort_indicator(SortField::Tokens),
+                    (10, false, false) if drop_provider => sort_indicator(SortField::Cost),
+                    (3, true, false) => sort_indicator(SortField::Tokens),
+                    (4, true, false) => sort_indicator(SortField::Cost),
+                    (1, _, true) => sort_indicator(SortField::Cost),
+                    _ => "",
+                };
+                Cell::from(format!("{}{}", h, indicator))
+            })
+            .collect::<Vec<_>>(),
+    )
+    .style(
+        Style::default()
+            .fg(theme_accent)
+            .add_modifier(Modifier::BOLD),
+    )
+    .height(1);
+
+    let detail_len = rows_data.len();
+    let start = scroll_offset.min(detail_len);
+    let end = (start + visible_height).min(detail_len);
+
+    if start >= detail_len {
+        return;
+    }
+
+    let rows: Vec<Row> = rows_data[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let idx = i + start;
+            let is_selected = idx == selected_index;
+            let is_striped = idx % 2 == 1;
+            let model_color = app.model_color_for(row.provider, row.color_key);
+
+            let cells: Vec<Cell> = if is_very_narrow {
+                vec![
+                    Cell::from(truncate_text(row.model, 18)).style(
+                        Style::default()
+                            .fg(model_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else if is_narrow {
+                vec![
+                    Cell::from(truncate_text(row.model, 24)).style(
+                        Style::default()
+                            .fg(model_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(get_client_display_name(row.source))
+                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()),
+                    total_tokens_cell(row.tokens.total(), &app.theme),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            } else {
+                // Mid tier: the columns shrink, so clip the free-text cells
+                // explicitly (with the ellipsis marker) instead of letting the
+                // column boundary cut them silently.
+                let model_limit = if drop_provider { 10 } else { 30 };
+                let source_limit = if drop_provider { 8 } else { 14 };
+                vec![
+                    Cell::from(format!("{}", idx + 1)).style(Style::default().fg(theme_muted)),
+                    Cell::from(truncate_text(row.model, model_limit)).style(
+                        Style::default()
+                            .fg(model_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(get_provider_display_name(row.provider)),
+                    Cell::from(truncate_text(
+                        &get_client_display_name(row.source),
+                        source_limit,
+                    ))
+                    .style(Style::default().fg(theme_muted)),
+                    Cell::from(row.messages.to_string()),
+                    Cell::from(format_tokens(row.tokens.input)).style(metric_input_style),
+                    Cell::from(format_tokens(row.tokens.output)).style(metric_output_style),
+                    Cell::from(format_tokens(row.tokens.cache_read)).style(metric_cache_read_style),
+                    Cell::from(format_tokens(row.tokens.cache_write))
+                        .style(metric_cache_write_style),
+                    Cell::from(app.format_cache(
+                        row.tokens.cache_read,
+                        row.tokens.input,
+                        row.tokens.cache_write,
+                    ))
+                    .style(app.theme.count_style()),
+                    total_tokens_cell(row.tokens.total(), &app.theme),
+                    Cell::from(format_cost(row.cost)).style(Style::default().fg(Color::Green)),
+                ]
+            };
+
+            let row_style = if is_selected {
+                Style::default().bg(theme_selection)
+            } else if is_striped {
+                striped_row_style
+            } else {
+                Style::default()
+            };
+
+            let mut cells = cells;
+            if drop_provider {
+                cells.remove(2);
+            }
+            Row::new(cells).style(row_style).height(1)
+        })
+        .collect();
+
+    let widths = if is_very_narrow {
+        vec![Constraint::Percentage(70), Constraint::Percentage(30)]
+    } else if is_narrow {
+        vec![
+            Constraint::Percentage(42),
+            Constraint::Percentage(18),
+            Constraint::Percentage(12),
+            Constraint::Percentage(15),
+            Constraint::Percentage(13),
+        ]
+    } else if drop_provider {
+        vec![
+            Constraint::Length(2),
+            Constraint::Min(10),
+            Constraint::Length(8),
+            Constraint::Length(4),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
+            Constraint::Min(20),
+            Constraint::Length(16),
+            Constraint::Length(14),
+            Constraint::Length(6),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(10),
+        ]
+    };
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .row_highlight_style(Style::default().bg(theme_selection));
+
+    frame.render_widget(table, inner);
+
+    if detail_len > visible_height {
+        let scrollbar = app.glyphs.scrollbar();
+
+        let mut scrollbar_state =
+            viewport_scrollbar_state(detail_len, scroll_offset, visible_height);
 
         frame.render_stateful_widget(
             scrollbar,
@@ -413,7 +698,9 @@ mod tests {
             cost: 1.0,
             clients,
             models: BTreeMap::new(),
+            source_breakdown: BTreeMap::new(),
             message_count: 5,
+            client_breakdown: Default::default(),
             turn_count: 2,
         }
     }
@@ -617,5 +904,217 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn hour_with_sources(date: NaiveDate, h: u32) -> HourlyUsage {
+        use crate::tui::data::{HourlyModelInfo, HourlySourceInfo};
+
+        let mut clients = BTreeSet::new();
+        clients.insert("codex".to_string());
+        clients.insert("opencode".to_string());
+
+        let mut source_breakdown = BTreeMap::new();
+
+        let mut codex_models = BTreeMap::new();
+        codex_models.insert(
+            "gpt-5".to_string(),
+            HourlyModelInfo {
+                display_name: "gpt-5".to_string(),
+                color_key: "gpt-5".to_string(),
+                provider: "OpenAI".to_string(),
+                tokens: TokenBreakdown {
+                    input: 1000,
+                    output: 200,
+                    cache_read: 0,
+                    cache_write: 0,
+                    reasoning: 0,
+                },
+                cost: 0.05,
+                messages: 3,
+            },
+        );
+        source_breakdown.insert(
+            "codex".to_string(),
+            HourlySourceInfo {
+                tokens: TokenBreakdown {
+                    input: 1000,
+                    output: 200,
+                    cache_read: 0,
+                    cache_write: 0,
+                    reasoning: 0,
+                },
+                cost: 0.05,
+                message_count: 3,
+                turn_count: 1,
+                models: codex_models,
+            },
+        );
+
+        let mut opencode_models = BTreeMap::new();
+        opencode_models.insert(
+            "claude-sonnet".to_string(),
+            HourlyModelInfo {
+                display_name: "claude-sonnet".to_string(),
+                color_key: "claude-sonnet".to_string(),
+                provider: "Anthropic".to_string(),
+                tokens: TokenBreakdown {
+                    input: 2000,
+                    output: 500,
+                    cache_read: 100,
+                    cache_write: 50,
+                    reasoning: 0,
+                },
+                cost: 0.15,
+                messages: 4,
+            },
+        );
+        source_breakdown.insert(
+            "opencode".to_string(),
+            HourlySourceInfo {
+                tokens: TokenBreakdown {
+                    input: 2000,
+                    output: 500,
+                    cache_read: 100,
+                    cache_write: 50,
+                    reasoning: 0,
+                },
+                cost: 0.15,
+                message_count: 4,
+                turn_count: 2,
+                models: opencode_models,
+            },
+        );
+
+        HourlyUsage {
+            datetime: date.and_hms_opt(h, 0, 0).unwrap(),
+            tokens: TokenBreakdown {
+                input: 3000,
+                output: 700,
+                cache_read: 100,
+                cache_write: 50,
+                reasoning: 0,
+            },
+            cost: 0.20,
+            clients,
+            models: BTreeMap::new(),
+            source_breakdown,
+            message_count: 7,
+            client_breakdown: Default::default(),
+            turn_count: 3,
+        }
+    }
+
+    #[test]
+    fn hourly_split_sources_render_and_toggle() {
+        let d = NaiveDate::from_ymd_opt(2026, 5, 29).unwrap();
+        let mut app = make_app(140);
+        app.data.hourly = vec![hour_with_sources(d, 14)];
+
+        // Default: split sources is true.
+        assert!(app.hourly_split_sources);
+        let rows = app.get_sorted_hourly_rows();
+        assert_eq!(
+            rows.len(),
+            2,
+            "split mode should produce 2 rows for 2 sources"
+        );
+        assert_eq!(rows[0].source, Some("opencode"));
+        assert_eq!(rows[1].source, Some("codex"));
+        assert!(!rows[0].is_continuation);
+        assert!(
+            rows[1].is_continuation,
+            "second source in same hour should be continuation"
+        );
+
+        let body = render_lines(&mut app, 140, 20).join("\n");
+        assert!(body.contains("Codex"), "expected Codex row\n{body}");
+        assert!(body.contains("OpenCode"), "expected OpenCode row\n{body}");
+        assert!(body.contains("$0.05"), "expected Codex cost\n{body}");
+        assert!(body.contains("$0.15"), "expected OpenCode cost\n{body}");
+
+        // Toggle to merged mode.
+        app.hourly_split_sources = false;
+        let merged_rows = app.get_sorted_hourly_rows();
+        assert_eq!(merged_rows.len(), 1, "merged mode should produce 1 row");
+        assert_eq!(merged_rows[0].source, None);
+        assert_eq!(merged_rows[0].cost, 0.20);
+
+        let merged_body = render_lines(&mut app, 140, 20).join("\n");
+        assert!(
+            merged_body.contains("Codex CLI, Ope"),
+            "expected merged client list\n{merged_body}"
+        );
+        assert!(
+            merged_body.contains("$0.20"),
+            "expected combined cost\n{merged_body}"
+        );
+    }
+
+    #[test]
+    fn hourly_detail_view_navigation_and_render() {
+        let d = NaiveDate::from_ymd_opt(2026, 5, 29).unwrap();
+        let mut app = make_app(140);
+        app.data.hourly = vec![hour_with_sources(d, 14)];
+
+        // Default hourly sort is Tokens/Descending, so the first row is the
+        // opencode row (2K) and the second the codex row (1K). Detail views
+        // are scoped to the opened row's source.
+        app.selected_index = 0;
+        app.open_selected_hourly_detail();
+        assert!(app.is_hourly_detail_active());
+        assert_eq!(
+            app.hourly_detail_dt(),
+            Some(d.and_hms_opt(14, 0, 0).unwrap())
+        );
+
+        let detail_rows = app.get_sorted_hourly_detail_rows();
+        assert_eq!(detail_rows.len(), 1, "scoped to the opened row's source");
+        assert_eq!(detail_rows[0].model, "claude-sonnet");
+
+        // Render wide enough for the full layout: below ~141 columns the
+        // detail view drops the provider column (mid tier).
+        let body = render_lines(&mut app, 144, 20).join("\n");
+        assert!(
+            body.contains("Hourly Detail: 2026-05-29 14:00"),
+            "expected detail title\n{body}"
+        );
+        assert!(
+            body.contains("claude-sonnet"),
+            "expected claude-sonnet\n{body}"
+        );
+        assert!(body.contains("Anthropic"), "expected Anthropic\n{body}");
+        assert!(
+            !body.contains("gpt-5"),
+            "the codex row must not leak into the opencode detail\n{body}"
+        );
+
+        // Close, then open the second row (codex): scoped to its source.
+        app.close_hourly_detail();
+        assert!(!app.is_hourly_detail_active());
+        assert_eq!(app.hourly_detail_dt(), None);
+
+        app.selected_index = 1;
+        app.open_selected_hourly_detail();
+        let detail_rows = app.get_sorted_hourly_detail_rows();
+        assert_eq!(detail_rows.len(), 1, "scoped to the opened row's source");
+        assert_eq!(detail_rows[0].model, "gpt-5");
+        let body = render_lines(&mut app, 144, 20).join("\n");
+        assert!(body.contains("gpt-5"), "expected gpt-5\n{body}");
+        assert!(body.contains("OpenAI"), "expected OpenAI\n{body}");
+        assert!(
+            !body.contains("claude-sonnet"),
+            "the opencode row must not leak into the codex detail\n{body}"
+        );
+
+        // Close detail view.
+        app.close_hourly_detail();
+        assert!(!app.is_hourly_detail_active());
+        assert_eq!(app.hourly_detail_dt(), None);
+
+        let table_body = render_lines(&mut app, 140, 20).join("\n");
+        assert!(
+            table_body.contains("Hourly Usage"),
+            "expected hourly usage table\n{table_body}"
+        );
     }
 }

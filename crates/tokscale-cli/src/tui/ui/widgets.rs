@@ -91,6 +91,37 @@ pub fn format_cache_hit_rate(
     format!("{:.1}x", ratio)
 }
 
+/// Prompt cache hit percentage: `cache_read / (input + cache_read + cache_write) * 100.0`.
+/// Measures the percentage of total prompt tokens served from cache.
+pub fn format_cache_hit_percent(
+    cache_read: u64,
+    input: u64,
+    cache_write: u64,
+    glyphs: Glyphs,
+) -> String {
+    let total_prompt = super::super::data::prompt_total_u128(input, cache_read, cache_write);
+    if total_prompt == 0 {
+        return glyphs.missing.to_string();
+    }
+    let pct = (cache_read as f64 / total_prompt as f64) * 100.0;
+    format!("{:.1}%", pct)
+}
+
+/// Formats the cache metric either as percentage or as reuse multiplier.
+pub fn format_cache_hit(
+    cache_read: u64,
+    input: u64,
+    cache_write: u64,
+    as_percent: bool,
+    glyphs: Glyphs,
+) -> String {
+    if as_percent {
+        format_cache_hit_percent(cache_read, input, cache_write, glyphs)
+    } else {
+        format_cache_hit_rate(cache_read, input, cache_write, glyphs)
+    }
+}
+
 pub fn format_ms_per_1k(ms_per_1k_tokens: Option<f64>, glyphs: Glyphs) -> String {
     let Some(value) = ms_per_1k_tokens else {
         return glyphs.missing.to_string();

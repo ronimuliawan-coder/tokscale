@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::widgets::{
-    display_width, format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
+    display_width, format_cost, format_cost_per_million, format_tokens,
     get_compact_client_display_name, prefix_to_width, total_tokens_cell, truncate_text,
     truncate_to_width, viewport_scrollbar_state,
 };
@@ -327,12 +327,7 @@ impl SessionColumn {
             Self::CacheWrite => Cell::from(self.fit(format_tokens(s.tokens.cache_write), ctx))
                 .style(app.theme.metric_cache_write_style()),
             Self::CacheHit => Cell::from(self.fit(
-                format_cache_hit_rate(
-                    s.tokens.cache_read,
-                    s.tokens.input,
-                    s.tokens.cache_write,
-                    app.glyphs,
-                ),
+                app.format_cache(s.tokens.cache_read, s.tokens.input, s.tokens.cache_write),
                 ctx,
             ))
             .style(app.theme.count_style()),
@@ -1058,6 +1053,9 @@ mod tests {
                 display_name: "test-model".to_string(),
                 provider: "test".to_string(),
                 color_key: "test-model".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             }],
             tokens: TokenBreakdown {
                 input: 1000,
@@ -1086,6 +1084,9 @@ mod tests {
             display_name: "claude-sonnet-4".to_string(),
             provider: "anthropic".to_string(),
             color_key: "claude-sonnet-4".to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
         }];
         s.tokens = TokenBreakdown {
             input: 1_234_567,
@@ -1852,6 +1853,9 @@ mod tests {
                     display_name: "모".repeat(30),
                     provider: "test".to_string(),
                     color_key: "test-model".to_string(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 0.0,
+                    message_count: 0,
                 }];
                 let mut app = app_with(width, vec![s]);
                 let row = first_row_line(&mut app, width);
@@ -2100,6 +2104,9 @@ mod tests {
             display_name: "claude-sonnet-4".to_string(),
             provider: "anthropic".to_string(),
             color_key: "claude-sonnet-4".to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
         }];
         let mut app = app_with(200, vec![s]);
         let body = render_body(&mut app, 200, 12);
@@ -2118,11 +2125,17 @@ mod tests {
                 display_name: "gpt-4o".to_string(),
                 provider: "openai".to_string(),
                 color_key: "gpt-4o".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             },
             SessionModel {
                 display_name: "o3-mini".to_string(),
                 provider: "openai".to_string(),
                 color_key: "o3-mini".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             },
         ];
         let mut app = app_with(220, vec![s]);
@@ -2290,11 +2303,17 @@ mod tests {
                 display_name: "gemini-2-5-flash-lite".to_string(),
                 provider: "google".to_string(),
                 color_key: "gemini-2-5-flash-lite".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             },
             SessionModel {
                 display_name: "claude-sonnet-4-5".to_string(),
                 provider: "anthropic".to_string(),
                 color_key: "claude-sonnet-4-5".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                message_count: 0,
             },
         ];
         let mut app = app_with(width, vec![s]);
@@ -2321,6 +2340,9 @@ mod tests {
             display_name: "a-very-long-model-name-that-overflows".to_string(),
             provider: "anthropic".to_string(),
             color_key: "a-very-long-model-name-that-overflows".to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
         }];
         let mut app = app_with(width, vec![s]);
         let body = render_body(&mut app, width, 12);

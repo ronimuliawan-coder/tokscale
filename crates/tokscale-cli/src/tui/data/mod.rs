@@ -27,7 +27,7 @@ fn data_loader_scanner_settings() -> tokscale_core::scanner::ScannerSettings {
     tokscale_core::scanner::ScannerSettings::default()
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TokenBreakdown {
     pub input: u64,
     pub output: u64,
@@ -44,6 +44,12 @@ impl TokenBreakdown {
             .saturating_add(self.cache_write)
             .saturating_add(self.reasoning)
     }
+}
+
+/// Exact prompt-token denominator (input + cache_read + cache_write) widened to
+/// u128, so cache-hit percentages stay accurate where a u64 sum could overflow.
+pub fn prompt_total_u128(input: u64, cache_read: u64, cache_write: u64) -> u128 {
+    input as u128 + cache_read as u128 + cache_write as u128
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +119,10 @@ pub struct DailySourceInfo {
     pub tokens: TokenBreakdown,
     pub cost: f64,
     pub models: BTreeMap<String, DailyModelInfo>,
+    /// Messages and turn starts attributed to this source, mirroring
+    /// [`HourlySourceInfo`] so per-source rows do not repeat the day totals.
+    pub message_count: u32,
+    pub turn_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +143,16 @@ pub struct HourlyModelInfo {
     pub color_key: String,
     pub tokens: TokenBreakdown,
     pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct HourlySourceInfo {
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+    pub turn_count: u32,
+    pub models: BTreeMap<String, HourlyModelInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +163,13 @@ pub struct HourlyUsage {
     /// Clients seen, or machine labels for `GroupBy::MachineModel`.
     pub clients: BTreeSet<String>,
     pub models: BTreeMap<String, HourlyModelInfo>,
+    /// Keyed by the same source label the rows display — the client under
+    /// client grouping, the machine label under machine grouping.
+    pub source_breakdown: BTreeMap<String, HourlySourceInfo>,
+    /// Client-keyed token totals, kept alongside [`HourlyUsage::source_breakdown`]
+    /// so client-level views (hourly profile peaks) stay client-keyed under
+    /// every grouping.
+    pub client_breakdown: BTreeMap<String, TokenBreakdown>,
     pub message_count: u32,
     pub turn_count: u32,
 }
@@ -267,12 +294,33 @@ impl SessionUsage {
             }
         }
         for model in &branch.models {
-            if !self
+            match self
                 .models
-                .iter()
-                .any(|m| m.display_name == model.display_name)
+                .iter_mut()
+                .find(|m| m.display_name == model.display_name)
             {
-                self.models.push(model.clone());
+                Some(existing) => {
+                    existing.tokens.input =
+                        existing.tokens.input.saturating_add(model.tokens.input);
+                    existing.tokens.output =
+                        existing.tokens.output.saturating_add(model.tokens.output);
+                    existing.tokens.cache_read = existing
+                        .tokens
+                        .cache_read
+                        .saturating_add(model.tokens.cache_read);
+                    existing.tokens.cache_write = existing
+                        .tokens
+                        .cache_write
+                        .saturating_add(model.tokens.cache_write);
+                    existing.tokens.reasoning = existing
+                        .tokens
+                        .reasoning
+                        .saturating_add(model.tokens.reasoning);
+                    existing.cost += model.cost;
+                    existing.message_count =
+                        existing.message_count.saturating_add(model.message_count);
+                }
+                None => self.models.push(model.clone()),
             }
         }
     }
@@ -370,27 +418,70 @@ fn accumulate_session_entry(
     }
 
     // Track distinct models in first-seen order, retaining provider and
-    // color_key for correct shade-map lookups.
-    if !entry
+    // color_key for correct shade-map lookups, and attribute this message's
+    // usage to its model so model-detail rows do not repeat session totals.
+    match entry
         .models
-        .iter()
-        .any(|m| m.display_name == normalized_model)
+        .iter_mut()
+        .find(|m| m.display_name == normalized_model)
     {
-        entry.models.push(SessionModel {
-            display_name: normalized_model.to_string(),
-            provider: msg.provider_id.clone(),
-            color_key: model_key.to_string(),
-        });
+        Some(m) => {
+            m.tokens.input = m
+                .tokens
+                .input
+                .saturating_add(msg.tokens.input.max(0) as u64);
+            m.tokens.output = m
+                .tokens
+                .output
+                .saturating_add(msg.tokens.output.max(0) as u64);
+            m.tokens.cache_read = m
+                .tokens
+                .cache_read
+                .saturating_add(msg.tokens.cache_read.max(0) as u64);
+            m.tokens.cache_write = m
+                .tokens
+                .cache_write
+                .saturating_add(msg.tokens.cache_write.max(0) as u64);
+            m.tokens.reasoning = m
+                .tokens
+                .reasoning
+                .saturating_add(msg.tokens.reasoning.max(0) as u64);
+            m.cost += msg_cost;
+            m.message_count = m
+                .message_count
+                .saturating_add(msg.message_count.max(0) as u32);
+        }
+        None => {
+            entry.models.push(SessionModel {
+                display_name: normalized_model.to_string(),
+                provider: msg.provider_id.clone(),
+                color_key: model_key.to_string(),
+                tokens: TokenBreakdown {
+                    input: msg.tokens.input.max(0) as u64,
+                    output: msg.tokens.output.max(0) as u64,
+                    cache_read: msg.tokens.cache_read.max(0) as u64,
+                    cache_write: msg.tokens.cache_write.max(0) as u64,
+                    reasoning: msg.tokens.reasoning.max(0) as u64,
+                },
+                cost: msg_cost,
+                message_count: msg.message_count.max(0) as u32,
+            });
+        }
     }
 }
 
 /// A model entry within a session, retaining the provider and color_key
-/// needed for correct family-shade color lookup alongside the display name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// needed for correct family-shade color lookup alongside the display name,
+/// plus the usage attributed specifically to this model so model-detail rows
+/// do not repeat session-wide totals.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionModel {
     pub display_name: String,
     pub provider: String,
     pub color_key: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
 }
 
 /// Per-project (workspace) usage rollup. One row per workspace grouping key
@@ -434,6 +525,29 @@ pub struct GraphData {
     pub weeks: Vec<Vec<Option<ContributionDay>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClientModelInfo {
+    pub provider: String,
+    pub display_name: String,
+    pub color_key: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientUsage {
+    pub client: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
+    pub session_count: u32,
+    pub turn_count: u32,
+    pub models: BTreeMap<String, ClientModelInfo>,
+    pub first_active_ms: i64,
+    pub last_active_ms: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct UsageData {
     pub models: Vec<ModelUsage>,
@@ -448,6 +562,7 @@ pub struct UsageData {
     /// `parent_session_id`) rolled into their parent session's row.
     /// Recomputed alongside `sessions` on every aggregation.
     pub sessions_rolled: Vec<SessionUsage>,
+    pub clients: Vec<ClientUsage>,
     pub graph: Option<GraphData>,
     pub total_tokens: u64,
     pub undated_tokens: u64,
@@ -814,6 +929,8 @@ impl DataLoader {
         let mut session_map: HashMap<String, SessionUsage> = HashMap::new();
         let mut project_map: HashMap<String, ProjectUsage> = HashMap::new();
         let mut project_session_ids: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut client_map: HashMap<String, ClientUsage> = HashMap::new();
+        let mut client_session_ids: HashMap<String, HashSet<String>> = HashMap::new();
         // Memoizes the filesystem probes that resolve a workspace key to a label.
         let mut workspace_labeler = tokscale_core::WorkspaceLabeler::default();
         // Labels are basenames, so two different directories that share one paint
@@ -1191,6 +1308,8 @@ impl DataLoader {
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
                         models: BTreeMap::new(),
+                        message_count: 0,
+                        turn_count: 0,
                     });
 
                 source_entry.tokens.input = source_entry
@@ -1214,6 +1333,12 @@ impl DataLoader {
                     .reasoning
                     .saturating_add(msg.tokens.reasoning.max(0) as u64);
                 source_entry.cost += msg_cost;
+                source_entry.message_count = source_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
+                if msg.is_turn_start {
+                    source_entry.turn_count = source_entry.turn_count.saturating_add(1);
+                }
 
                 let daily_model_key = daily_source_model_key(
                     group_by,
@@ -1281,6 +1406,8 @@ impl DataLoader {
                     cost: 0.0,
                     clients: BTreeSet::new(),
                     models: BTreeMap::new(),
+                    source_breakdown: BTreeMap::new(),
+                    client_breakdown: BTreeMap::new(),
                     message_count: 0,
                     turn_count: 0,
                 });
@@ -1317,8 +1444,108 @@ impl DataLoader {
                 }
                 hourly_entry.clients.insert(period_source.to_string());
 
+                let source_entry = hourly_entry
+                    .source_breakdown
+                    .entry(period_source.to_string())
+                    .or_insert_with(|| HourlySourceInfo {
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
+                        turn_count: 0,
+                        models: BTreeMap::new(),
+                    });
+
+                // Client-keyed companion: the hourly profile's per-client peak
+                // must not depend on what the source column is keyed by.
+                let client_entry = hourly_entry
+                    .client_breakdown
+                    .entry(msg.client.clone())
+                    .or_default();
+                client_entry.input = client_entry
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                client_entry.output = client_entry
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                client_entry.cache_read = client_entry
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                client_entry.cache_write = client_entry
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                client_entry.reasoning = client_entry
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+
+                source_entry.tokens.input = source_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                source_entry.tokens.output = source_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                source_entry.tokens.cache_read = source_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                source_entry.tokens.cache_write = source_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                source_entry.tokens.reasoning = source_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                source_entry.cost += h_cost;
+                source_entry.message_count += msg.message_count.max(0) as u32;
+                if msg.is_turn_start {
+                    source_entry.turn_count += 1;
+                }
+
                 let hourly_model_key =
                     hourly_model_key(group_by, &msg.provider_id, &normalized_model);
+
+                let s_model = source_entry
+                    .models
+                    .entry(hourly_model_key.clone())
+                    .or_insert_with(|| HourlyModelInfo {
+                        provider: msg.provider_id.clone(),
+                        display_name: hourly_model_display_name(
+                            group_by,
+                            &msg.provider_id,
+                            &normalized_model,
+                        ),
+                        color_key: model_color_key(group_by, &msg.provider_id, &model_key),
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        messages: 0,
+                    });
+                s_model.tokens.input = s_model
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                s_model.tokens.output = s_model
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                s_model.tokens.cache_read = s_model
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                s_model.tokens.cache_write = s_model
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                s_model.tokens.reasoning = s_model
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                s_model.cost += h_cost;
+                s_model.messages = s_model
+                    .messages
+                    .saturating_add(msg.message_count.max(0) as u64);
+
                 let h_model = hourly_entry
                     .models
                     .entry(hourly_model_key)
@@ -1332,6 +1559,7 @@ impl DataLoader {
                         color_key: model_color_key(group_by, &msg.provider_id, &model_key),
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
+                        messages: 0,
                     });
                 h_model.tokens.input = h_model
                     .tokens
@@ -1354,6 +1582,9 @@ impl DataLoader {
                     .reasoning
                     .saturating_add(msg.tokens.reasoning.max(0) as u64);
                 h_model.cost += h_cost;
+                h_model.messages = h_model
+                    .messages
+                    .saturating_add(msg.message_count.max(0) as u64);
             }
 
             // Minute aggregation: same fallback semantics as hourly, but
@@ -1427,6 +1658,7 @@ impl DataLoader {
                             color_key: model_color_key(group_by, &msg.provider_id, &model_key),
                             tokens: TokenBreakdown::default(),
                             cost: 0.0,
+                            messages: 0,
                         });
                 m_model.tokens.input = m_model
                     .tokens
@@ -1581,6 +1813,9 @@ impl DataLoader {
                         display_name: normalized_model.clone(),
                         provider: msg.provider_id.clone(),
                         color_key: model_key.clone(),
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
                     });
                 }
 
@@ -1593,6 +1828,109 @@ impl DataLoader {
                         project_entry.session_count += 1;
                     }
                 }
+            }
+
+            // Client rollup
+            {
+                let client_entry =
+                    client_map
+                        .entry(msg.client.clone())
+                        .or_insert_with(|| ClientUsage {
+                            client: msg.client.clone(),
+                            tokens: TokenBreakdown::default(),
+                            cost: 0.0,
+                            message_count: 0,
+                            session_count: 0,
+                            turn_count: 0,
+                            models: BTreeMap::new(),
+                            first_active_ms: 0,
+                            last_active_ms: 0,
+                        });
+
+                client_entry.tokens.input = client_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                client_entry.tokens.output = client_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                client_entry.tokens.cache_read = client_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                client_entry.tokens.cache_write = client_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                client_entry.tokens.reasoning = client_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                if msg.cost.is_finite() && msg.cost >= 0.0 {
+                    client_entry.cost += msg.cost;
+                }
+                client_entry.message_count = client_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
+                if msg.is_turn_start {
+                    client_entry.turn_count = client_entry.turn_count.saturating_add(1);
+                }
+
+                let ts = message_timestamp_ms(msg);
+                if ts > 0 {
+                    if client_entry.first_active_ms == 0 || ts < client_entry.first_active_ms {
+                        client_entry.first_active_ms = ts;
+                    }
+                    if ts > client_entry.last_active_ms {
+                        client_entry.last_active_ms = ts;
+                    }
+                }
+
+                if !is_recovery_floor && !msg.session_id.is_empty() {
+                    let client_sess = client_session_ids.entry(msg.client.clone()).or_default();
+                    if client_sess.insert(msg.session_id.clone()) {
+                        client_entry.session_count += 1;
+                    }
+                }
+
+                let model_entry = client_entry
+                    .models
+                    .entry(normalized_model.clone())
+                    .or_insert_with(|| ClientModelInfo {
+                        provider: msg.provider_id.clone(),
+                        display_name: normalized_model.clone(),
+                        color_key: model_key.clone(),
+                        tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
+                    });
+                model_entry.tokens.input = model_entry
+                    .tokens
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                model_entry.tokens.output = model_entry
+                    .tokens
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                model_entry.tokens.cache_read = model_entry
+                    .tokens
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                model_entry.tokens.cache_write = model_entry
+                    .tokens
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                model_entry.tokens.reasoning = model_entry
+                    .tokens
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
+                if msg.cost.is_finite() && msg.cost >= 0.0 {
+                    model_entry.cost += msg.cost;
+                }
+                model_entry.message_count = model_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
             }
         }
 
@@ -1732,6 +2070,14 @@ impl DataLoader {
                 .then_with(|| a.group_key.cmp(&b.group_key))
         });
 
+        let mut clients: Vec<ClientUsage> = client_map.into_values().collect();
+        clients.sort_by(|a, b| {
+            b.cost
+                .total_cmp(&a.cost)
+                .then_with(|| b.tokens.total().cmp(&a.tokens.total()))
+                .then_with(|| a.client.cmp(&b.client))
+        });
+
         // Plain `.sum()` panics (debug) / wraps (release) on overflow across
         // many models; a single corrupt/huge bucket must not poison the
         // whole total, so fold with saturating_add like `TokenBreakdown::total`.
@@ -1757,6 +2103,7 @@ impl DataLoader {
             sessions,
             projects,
             sessions_rolled,
+            clients,
             graph: Some(graph),
             total_tokens,
             undated_tokens: messages
@@ -2178,7 +2525,9 @@ mod tests {
             cost: 1.0,
             clients: BTreeSet::new(),
             models: BTreeMap::new(),
+            source_breakdown: BTreeMap::new(),
             message_count: 1,
+            client_breakdown: Default::default(),
             turn_count: 1,
         };
 
@@ -4432,15 +4781,35 @@ after"#,
         assert_eq!(
             usage.sessions[0].models,
             vec![
+                // Two messages normalized to one display name: usage sums,
+                // provider stays first-seen.
                 SessionModel {
                     display_name: "claude-sonnet-4-5".to_string(),
                     provider: "anthropic".to_string(),
                     color_key: "claude-sonnet-4-5".to_string(),
+                    tokens: TokenBreakdown {
+                        input: 20,
+                        output: 10,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    cost: 2.0,
+                    message_count: 2,
                 },
                 SessionModel {
                     display_name: "gpt-5".to_string(),
                     provider: "openai".to_string(),
                     color_key: "gpt-5".to_string(),
+                    tokens: TokenBreakdown {
+                        input: 10,
+                        output: 5,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    cost: 1.0,
+                    message_count: 1,
                 },
             ]
         );
@@ -4878,6 +5247,11 @@ after"#,
         assert_eq!(usage.sessions.len(), 1, "the floor is not a session");
         assert_eq!(usage.agents.len(), 1, "the floor is not an agent");
         assert_eq!(usage.agents[0].agent, "Build");
+        let client_sessions: u32 = usage.clients.iter().map(|c| c.session_count).sum();
+        assert_eq!(
+            client_sessions, 1,
+            "the floor's synthetic id is not a client session"
+        );
         let hourly_input: u64 = usage.hourly.iter().map(|h| h.tokens.input).sum();
         assert_eq!(hourly_input, 100, "a day-level fill has no hour");
         let minutely_input: u64 = usage.minutely.iter().map(|m| m.tokens.input).sum();

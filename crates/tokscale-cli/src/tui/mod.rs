@@ -6,7 +6,7 @@ mod colors;
 pub mod config;
 pub mod data;
 mod event;
-mod export;
+pub mod export;
 pub(crate) mod glyph_probe;
 pub mod i18n;
 mod keymap;

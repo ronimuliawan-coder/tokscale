@@ -15,13 +15,14 @@ use tokscale_core::{sessions, GroupBy, ModelPerformance};
 use crate::ClientFilter;
 
 use super::data::{
-    aggregate_monthly_from_daily, AgentUsage, ContributionDay, DailyModelInfo, DailySourceInfo,
-    DailyUsage, GraphData, HourlyModelInfo, HourlyUsage, ModelUsage, TokenBreakdown, UsageData,
+    aggregate_monthly_from_daily, AgentUsage, ClientModelInfo, ClientUsage, ContributionDay,
+    DailyModelInfo, DailySourceInfo, DailyUsage, GraphData, HourlyModelInfo, HourlySourceInfo,
+    HourlyUsage, ModelUsage, TokenBreakdown, UsageData,
 };
 
 /// Cache staleness threshold: 5 minutes (matches TS implementation)
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
-const CACHE_SCHEMA_VERSION: u32 = 12;
+const CACHE_SCHEMA_VERSION: u32 = 13;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +123,8 @@ struct CachedUsageData {
     daily: Vec<CachedDailyUsage>,
     #[serde(default)]
     hourly: Vec<CachedHourlyUsage>,
+    #[serde(default)]
+    clients: Vec<CachedClientUsage>,
     graph: Option<CachedGraphData>,
     total_tokens: u64,
     #[serde(default)]
@@ -199,6 +202,10 @@ struct CachedDailySourceInfo {
     tokens: CachedTokenBreakdown,
     cost: f64,
     models: Vec<(String, CachedDailyModelInfo)>,
+    #[serde(default)]
+    message_count: u32,
+    #[serde(default)]
+    turn_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +235,20 @@ struct CachedHourlyModelInfo {
     color_key: String,
     tokens: CachedTokenBreakdown,
     cost: f64,
+    #[serde(default)]
+    messages: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedHourlySourceInfo {
+    tokens: CachedTokenBreakdown,
+    cost: f64,
+    #[serde(default)]
+    message_count: u32,
+    #[serde(default)]
+    turn_count: u32,
+    models: Vec<(String, CachedHourlyModelInfo)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,9 +260,43 @@ struct CachedHourlyUsage {
     clients: Vec<String>,
     models: Vec<(String, CachedHourlyModelInfo)>,
     #[serde(default)]
+    source_breakdown: Vec<(String, CachedHourlySourceInfo)>,
+    #[serde(default)]
+    client_breakdown: Vec<(String, CachedTokenBreakdown)>,
+    #[serde(default)]
     message_count: u32,
     #[serde(default)]
     turn_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedClientModelInfo {
+    provider: String,
+    display_name: String,
+    #[serde(default)]
+    color_key: String,
+    tokens: CachedTokenBreakdown,
+    cost: f64,
+    #[serde(default)]
+    message_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedClientUsage {
+    client: String,
+    tokens: CachedTokenBreakdown,
+    cost: f64,
+    message_count: u32,
+    session_count: u32,
+    turn_count: u32,
+    #[serde(default)]
+    models: Vec<(String, CachedClientModelInfo)>,
+    #[serde(default)]
+    first_active_ms: i64,
+    #[serde(default)]
+    last_active_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +459,8 @@ impl From<&DailySourceInfo> for CachedDailySourceInfo {
                 .iter()
                 .map(|(key, value)| (key.clone(), value.into()))
                 .collect(),
+            message_count: source.message_count,
+            turn_count: source.turn_count,
         }
     }
 }
@@ -421,6 +478,8 @@ impl From<CachedDailySourceInfo> for DailySourceInfo {
                     (key, model_info)
                 })
                 .collect(),
+            message_count: source.message_count,
+            turn_count: source.turn_count,
         }
     }
 }
@@ -433,6 +492,7 @@ impl From<&HourlyModelInfo> for CachedHourlyModelInfo {
             color_key: h.color_key.clone(),
             tokens: (&h.tokens).into(),
             cost: h.cost,
+            messages: h.messages,
         }
     }
 }
@@ -458,6 +518,42 @@ fn hourly_model_info_from_cached(key: &str, value: CachedHourlyModelInfo) -> Hou
         color_key,
         tokens: value.tokens.into(),
         cost: value.cost,
+        messages: value.messages,
+    }
+}
+
+impl From<&HourlySourceInfo> for CachedHourlySourceInfo {
+    fn from(source: &HourlySourceInfo) -> Self {
+        Self {
+            tokens: (&source.tokens).into(),
+            cost: source.cost,
+            message_count: source.message_count,
+            turn_count: source.turn_count,
+            models: source
+                .models
+                .iter()
+                .map(|(key, value)| (key.clone(), value.into()))
+                .collect(),
+        }
+    }
+}
+
+impl From<CachedHourlySourceInfo> for HourlySourceInfo {
+    fn from(source: CachedHourlySourceInfo) -> Self {
+        Self {
+            tokens: source.tokens.into(),
+            cost: source.cost,
+            message_count: source.message_count,
+            turn_count: source.turn_count,
+            models: source
+                .models
+                .into_iter()
+                .map(|(key, value)| {
+                    let model_info = hourly_model_info_from_cached(&key, value);
+                    (key, model_info)
+                })
+                .collect(),
+        }
     }
 }
 
@@ -473,6 +569,16 @@ impl From<&HourlyUsage> for CachedHourlyUsage {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.into()))
                 .collect(),
+            source_breakdown: h
+                .source_breakdown
+                .iter()
+                .map(|(k, v)| (k.clone(), v.into()))
+                .collect(),
+            client_breakdown: h
+                .client_breakdown
+                .iter()
+                .map(|(k, v)| (k.clone(), v.into()))
+                .collect(),
             message_count: h.message_count,
             turn_count: h.turn_count,
         }
@@ -484,6 +590,50 @@ impl TryFrom<CachedHourlyUsage> for HourlyUsage {
 
     fn try_from(h: CachedHourlyUsage) -> Result<Self, Self::Error> {
         use chrono::NaiveDateTime;
+        let source_breakdown = if h.source_breakdown.is_empty() {
+            let mut legacy_sources: BTreeMap<String, HourlySourceInfo> = BTreeMap::new();
+            if h.clients.len() == 1 {
+                let client = h.clients[0].clone();
+                let models: BTreeMap<String, HourlyModelInfo> = h
+                    .models
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            hourly_model_info_from_cached(key, value.clone()),
+                        )
+                    })
+                    .collect();
+                legacy_sources.insert(
+                    client,
+                    HourlySourceInfo {
+                        tokens: h.tokens.clone().into(),
+                        cost: h.cost,
+                        message_count: h.message_count,
+                        turn_count: h.turn_count,
+                        models,
+                    },
+                );
+            }
+            legacy_sources
+        } else {
+            h.source_breakdown
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect()
+        };
+
+        // Legacy single-client entry: the hour's tokens are that client's,
+        // mirroring the source_breakdown fallback above.
+        let client_breakdown = if h.client_breakdown.is_empty() && h.clients.len() == 1 {
+            std::iter::once((h.clients[0].clone(), h.tokens.clone().into())).collect()
+        } else {
+            h.client_breakdown
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect()
+        };
+
         Ok(Self {
             datetime: NaiveDateTime::parse_from_str(&h.datetime, "%Y-%m-%d %H:%M:%S")?,
             tokens: h.tokens.into(),
@@ -497,6 +647,8 @@ impl TryFrom<CachedHourlyUsage> for HourlyUsage {
                     (key, model_info)
                 })
                 .collect(),
+            source_breakdown,
+            client_breakdown,
             message_count: h.message_count,
             turn_count: h.turn_count,
         })
@@ -542,6 +694,10 @@ impl TryFrom<CachedDailyUsage> for DailyUsage {
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
                         models: BTreeMap::new(),
+                        // Legacy payloads carry no per-source counters; the
+                        // background refresh replaces this window.
+                        message_count: 0,
+                        turn_count: 0,
                     });
                 source.tokens.input = source.tokens.input.saturating_add(model_info.tokens.input);
                 source.tokens.output = source
@@ -579,6 +735,87 @@ impl TryFrom<CachedDailyUsage> for DailyUsage {
             message_count: d.message_count,
             turn_count: d.turn_count,
         })
+    }
+}
+
+impl From<&ClientModelInfo> for CachedClientModelInfo {
+    fn from(c: &ClientModelInfo) -> Self {
+        Self {
+            provider: c.provider.clone(),
+            display_name: c.display_name.clone(),
+            color_key: c.color_key.clone(),
+            tokens: (&c.tokens).into(),
+            cost: c.cost,
+            message_count: c.message_count,
+        }
+    }
+}
+
+fn client_model_info_from_cached(key: &str, value: CachedClientModelInfo) -> ClientModelInfo {
+    let display_name = if value.display_name.is_empty() {
+        key.to_string()
+    } else {
+        value.display_name
+    };
+    let color_key = if value.color_key.is_empty() {
+        display_name
+            .rsplit_once(" / ")
+            .map(|(_, base_model)| base_model.to_string())
+            .unwrap_or_else(|| display_name.clone())
+    } else {
+        value.color_key
+    };
+
+    ClientModelInfo {
+        provider: value.provider,
+        display_name,
+        color_key,
+        tokens: value.tokens.into(),
+        cost: value.cost,
+        message_count: value.message_count,
+    }
+}
+
+impl From<&ClientUsage> for CachedClientUsage {
+    fn from(c: &ClientUsage) -> Self {
+        Self {
+            client: c.client.clone(),
+            tokens: (&c.tokens).into(),
+            cost: c.cost,
+            message_count: c.message_count,
+            session_count: c.session_count,
+            turn_count: c.turn_count,
+            models: c
+                .models
+                .iter()
+                .map(|(k, v)| (k.clone(), v.into()))
+                .collect(),
+            first_active_ms: c.first_active_ms,
+            last_active_ms: c.last_active_ms,
+        }
+    }
+}
+
+impl From<CachedClientUsage> for ClientUsage {
+    fn from(c: CachedClientUsage) -> Self {
+        Self {
+            client: c.client,
+            tokens: c.tokens.into(),
+            cost: c.cost,
+            message_count: c.message_count,
+            session_count: c.session_count,
+            turn_count: c.turn_count,
+            models: c
+                .models
+                .into_iter()
+                .map(|(key, value)| {
+                    let model_info = client_model_info_from_cached(&key, value);
+                    (key, model_info)
+                })
+                .collect(),
+            first_active_ms: c.first_active_ms,
+            last_active_ms: c.last_active_ms,
+        }
     }
 }
 
@@ -647,6 +884,7 @@ impl From<&UsageData> for CachedUsageData {
             agents: u.agents.iter().map(|a| a.into()).collect(),
             daily: u.daily.iter().map(|d| d.into()).collect(),
             hourly: u.hourly.iter().map(|h| h.into()).collect(),
+            clients: u.clients.iter().map(|c| c.into()).collect(),
             graph: u.graph.as_ref().map(|g| g.into()),
             total_tokens: u.total_tokens,
             undated_tokens: u.undated_tokens,
@@ -667,9 +905,16 @@ impl TryFrom<CachedUsageData> for UsageData {
         let graph: Option<Result<GraphData, _>> = u.graph.map(|g| g.try_into());
         let daily = daily?;
         let monthly = aggregate_monthly_from_daily(&daily);
+        let models: Vec<ModelUsage> = u.models.into_iter().map(|m| m.into()).collect();
+        // Payloads written before the clients field existed deserialize empty.
+        // Model-derived client rows would double-count sessions and zero out
+        // message/turn counters, so leave the list empty — the background
+        // load scheduled on every startup refreshes it, matching the
+        // minutely/sessions/projects convention.
+        let clients: Vec<ClientUsage> = u.clients.into_iter().map(|c| c.into()).collect();
 
         Ok(Self {
-            models: u.models.into_iter().map(|m| m.into()).collect(),
+            models,
             agents: normalize_cached_agents(u.agents),
             daily,
             hourly: hourly?,
@@ -689,6 +934,7 @@ impl TryFrom<CachedUsageData> for UsageData {
             // first background refresh after cache hit will populate them.
             projects: Vec::new(),
             sessions_rolled: Vec::new(),
+            clients,
             graph: graph.transpose()?,
             total_tokens: u.total_tokens,
             undated_tokens: u.undated_tokens,
@@ -1425,7 +1671,7 @@ mod tests {
             &cache_path,
             with_current_generation(
                 r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,
@@ -1704,7 +1950,7 @@ mod tests {
             &cache_path,
             with_current_generation(
                 r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude", "cursor"],
   "includeSynthetic": false,
@@ -1953,7 +2199,7 @@ mod tests {
     }
 
     const LEGACY_FALLBACK_PAYLOAD: &str = r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,

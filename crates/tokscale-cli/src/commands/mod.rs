@@ -2,6 +2,7 @@ pub mod apple_fm;
 pub mod autosubmit;
 pub mod codex_activity;
 pub mod config;
+pub mod export;
 pub mod import;
 pub mod report;
 pub mod usage;

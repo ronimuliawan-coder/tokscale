@@ -2,8 +2,8 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::widgets::{
-    format_cost, format_tokens, get_client_color, period_source_display_name,
-    viewport_scrollbar_state,
+    format_cache_hit_percent, format_cost, format_tokens, get_client_color,
+    period_source_display_name, viewport_scrollbar_state,
 };
 use crate::tui::app::{App, ClickAction};
 use crate::tui::data::find_peak_hour;
@@ -342,7 +342,11 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
         .map(|(hour, _, _)| format!("{:02}:00", hour))
         .unwrap_or_else(|| "N/A".to_string());
 
-    let col1_width = if is_narrow { 36u16 } else { 60u16 };
+    let col1_width = if is_narrow {
+        36u16
+    } else {
+        (inner.width / 2).clamp(36, 60)
+    };
     let col2_x = inner.x + col1_width;
     let y_max = inner.y + inner.height;
 
@@ -489,21 +493,109 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
         Rect::new(inner.x, y, col1_width, 1),
     );
 
-    let peak_label = if is_narrow {
-        tr(lang, MessageKey::StatsPeakHourShort)
+    let (total_input, total_cache_read, total_cache_write) =
+        app.data
+            .models
+            .iter()
+            .fold((0u64, 0u64, 0u64), |(i, cr, cw), m| {
+                (
+                    i.saturating_add(m.tokens.input),
+                    cr.saturating_add(m.tokens.cache_read),
+                    cw.saturating_add(m.tokens.cache_write),
+                )
+            });
+    let cache_hit_str =
+        format_cache_hit_percent(total_cache_read, total_input, total_cache_write, app.glyphs);
+    let cache_label = if is_narrow {
+        tr(lang, MessageKey::StatsCacheHitShort)
     } else {
-        tr(lang, MessageKey::StatsPeakHour)
+        tr(lang, MessageKey::StatsCacheHitRate)
     };
-    let peak_hour_line = Line::from(vec![
-        Span::styled(peak_label, Style::default().fg(app.theme.muted)),
+    let cache_hit_line = Line::from(vec![
+        Span::styled(cache_label, Style::default().fg(app.theme.muted)),
         Span::raw(" "),
-        Span::styled(peak_hour, app.theme.count_style()),
+        Span::styled(cache_hit_str, app.theme.hint_key_style()),
     ]);
     frame.render_widget(
-        Paragraph::new(peak_hour_line),
+        Paragraph::new(cache_hit_line),
         Rect::new(col2_x, y, inner.width.saturating_sub(col1_width), 1),
     );
 
+    y += 1;
+    if y < y_max {
+        let (daily_burn, projected_30d) = if !app.data.daily.is_empty() {
+            // Anchor the window to today, not the last recorded day: a burn
+            // rate based on a week-old session would project spend that is
+            // no longer happening.
+            let today = chrono::Local::now().date_naive();
+            let min_date_7d = today - chrono::Duration::days(6);
+            let last_7_days_cost: f64 = app
+                .data
+                .daily
+                .iter()
+                .filter(|d| d.date >= min_date_7d && d.date <= today)
+                .map(|d| d.cost)
+                .sum();
+            let burn = last_7_days_cost / 7.0;
+            (burn, burn * 30.0)
+        } else {
+            (0.0, 0.0)
+        };
+
+        let burn_label = if is_narrow {
+            tr(lang, MessageKey::StatsBurnShort)
+        } else {
+            tr(lang, MessageKey::StatsBurnRate)
+        };
+        let burn_line = Line::from(vec![
+            Span::styled(burn_label, Style::default().fg(app.theme.muted)),
+            Span::raw(" "),
+            Span::styled(
+                format!("{}/day", format_cost(daily_burn)),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(burn_line),
+            Rect::new(inner.x, y, col1_width, 1),
+        );
+
+        let proj_label = if is_narrow {
+            tr(lang, MessageKey::StatsProjShort)
+        } else {
+            tr(lang, MessageKey::StatsProjection)
+        };
+        let proj_line = Line::from(vec![
+            Span::styled(proj_label, Style::default().fg(app.theme.muted)),
+            Span::raw(" "),
+            Span::styled(
+                format_cost(projected_30d),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(proj_line),
+            Rect::new(col2_x, y, inner.width.saturating_sub(col1_width), 1),
+        );
+    }
+
+    y += 1;
+    if y < y_max {
+        let peak_label = if is_narrow {
+            tr(lang, MessageKey::StatsPeakHourShort)
+        } else {
+            tr(lang, MessageKey::StatsPeakHour)
+        };
+        let peak_hour_line = Line::from(vec![
+            Span::styled(peak_label, Style::default().fg(app.theme.muted)),
+            Span::raw(" "),
+            Span::styled(peak_hour, app.theme.count_style()),
+        ]);
+        frame.render_widget(
+            Paragraph::new(peak_hour_line),
+            Rect::new(inner.x, y, col1_width, 1),
+        );
+    }
     y += 2;
     if y >= y_max {
         return;
@@ -969,7 +1061,9 @@ mod tests {
             cost: 1.0,
             clients: BTreeSet::new(),
             models: BTreeMap::new(),
+            source_breakdown: BTreeMap::new(),
             message_count: 1,
+            client_breakdown: Default::default(),
             turn_count: 1,
         };
         app.data.hourly = vec![hour(9, 10), hour(14, 500), hour(21, 40)];
@@ -1027,5 +1121,70 @@ mod tests {
             assert_eq!(day_labels(lang).len(), 7);
             assert_eq!(month_labels(lang).len(), 12);
         }
+    }
+
+    #[test]
+    fn stats_panel_renders_cache_hit_and_burn_rate() {
+        use crate::tui::data::{DailyUsage, ModelUsage, TokenBreakdown};
+        use tokscale_core::ModelPerformance;
+        let mut app = make_app();
+        app.data.models = vec![ModelUsage {
+            model: "claude-3-5-sonnet".to_string(),
+            color_key: "claude-3-5-sonnet".to_string(),
+            provider: "anthropic".to_string(),
+            client: "opencode".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            tokens: TokenBreakdown {
+                input: 200,
+                output: 100,
+                cache_read: 800,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            cost: 1.50,
+            performance: ModelPerformance::default(),
+            session_count: 5,
+            machine: None,
+            group_key: String::new(),
+            daily: Vec::new(),
+        }];
+        // Within the anchored 7-day window, so the burn rate is nonzero.
+        let today = chrono::Local::now().date_naive();
+        app.data.daily = vec![DailyUsage {
+            date: today,
+            tokens: TokenBreakdown {
+                input: 200,
+                output: 100,
+                cache_read: 800,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            cost: 7.00,
+            source_breakdown: Default::default(),
+            message_count: 10,
+            turn_count: 10,
+        }];
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_stats_panel(frame, &app, Rect::new(0, 0, 80, 20)))
+            .unwrap();
+
+        let body = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>();
+
+        assert!(body.contains("Cache hit rate:"));
+        assert!(body.contains("80.0%")); // 800 / (200 + 800 + 0) = 80%
+        assert!(body.contains("Burn rate (7d):"));
+        assert!(body.contains("$1.00/day")); // $7.00 / 7 days = $1.00/day
+        assert!(body.contains("30d projection:"));
+        assert!(body.contains("$30.00")); // $1.00 * 30 = $30.00
     }
 }
