@@ -30,7 +30,7 @@ env:
 jobs:
   vitest:
     name: Frontend Vitest
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-24.04-amd64-4x8
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

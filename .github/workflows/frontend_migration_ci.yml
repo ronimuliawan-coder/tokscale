@@ -45,7 +45,7 @@ env:
 jobs:
   migration-replay:
     name: Frontend Migration Replay
-    runs-on: ubuntu-latest
+    runs-on: nscloud-ubuntu-24.04-amd64-4x8
     services:
       postgres:
         image: postgres:16

@@ -39,7 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - host: macos-latest
+          - host: nscloud-macos-tahoe-arm64-6x14
             target: x86_64-apple-darwin
             package_dir: cli-darwin-x64
             artifact_name: cli-binary-x86_64-apple-darwin
@@ -52,35 +52,35 @@ jobs:
           # the vendored foundation-models-c shim; statically linked, so the
           # artifact stays a single self-contained binary. Apple Intelligence is
           # Apple-Silicon-only, so this is intentionally not enabled for x86_64.
-          - host: macos-26
+          - host: nscloud-macos-tahoe-arm64-6x14
             target: aarch64-apple-darwin
             package_dir: cli-darwin-arm64
             artifact_name: cli-binary-aarch64-apple-darwin
             build: cargo build --release -p tokscale-cli --target aarch64-apple-darwin --features apple-fm
             strip: strip -x target/aarch64-apple-darwin/release/tokscale
             bin_name: tokscale
-          - host: ubuntu-latest
+          - host: nscloud-ubuntu-24.04-amd64-4x8
             target: x86_64-unknown-linux-gnu
             package_dir: cli-linux-x64-gnu
             artifact_name: cli-binary-x86_64-unknown-linux-gnu
             build: cargo zigbuild --release -p tokscale-cli --target x86_64-unknown-linux-gnu
             strip: strip target/x86_64-unknown-linux-gnu/release/tokscale
             bin_name: tokscale
-          - host: ubuntu-latest
+          - host: nscloud-ubuntu-24.04-amd64-4x8
             target: x86_64-unknown-linux-musl
             package_dir: cli-linux-x64-musl
             artifact_name: cli-binary-x86_64-unknown-linux-musl
             build: cargo zigbuild --release -p tokscale-cli --target x86_64-unknown-linux-musl
             strip: strip target/x86_64-unknown-linux-musl/release/tokscale
             bin_name: tokscale
-          - host: ubuntu-latest
+          - host: nscloud-ubuntu-24.04-amd64-4x8
             target: aarch64-unknown-linux-gnu
             package_dir: cli-linux-arm64-gnu
             artifact_name: cli-binary-aarch64-unknown-linux-gnu
             build: cargo zigbuild --release -p tokscale-cli --target aarch64-unknown-linux-gnu
             strip: ""
             bin_name: tokscale
-          - host: ubuntu-latest
+          - host: nscloud-ubuntu-24.04-amd64-4x8
             target: aarch64-unknown-linux-musl
             package_dir: cli-linux-arm64-musl
             artifact_name: cli-binary-aarch64-unknown-linux-musl
@@ -93,7 +93,7 @@ jobs:
           # automatically for `aarch64-linux-android` (Clang 14, API 21
           # by default) and wires the CC/AR env vars so `cargo build
           # --target aarch64-linux-android` links against Bionic.
-          - host: ubuntu-latest
+          - host: nscloud-ubuntu-24.04-amd64-4x8
             target: aarch64-linux-android
             package_dir: cli-android-arm64
             artifact_name: cli-binary-aarch64-linux-android
