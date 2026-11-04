@@ -4833,6 +4833,8 @@ mod tests {
                 tokens: total_tokens.clone(),
                 cost: total_cost,
                 models: model_breakdown,
+                            message_count: 0,
+                turn_count: 0,
             },
         );
 

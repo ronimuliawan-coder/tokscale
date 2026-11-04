@@ -84,8 +84,8 @@ pub fn export_csv(data: &UsageData, granularity: &str, by_source: bool) -> Resul
                                 info.tokens.total(),
                                 hit_pct,
                                 info.cost,
-                                day.message_count,
-                                day.turn_count,
+                                info.message_count,
+                                info.turn_count,
                             ));
                         }
                     }
@@ -607,6 +607,8 @@ mod tests {
                 },
                 cost: 0.50,
                 models: BTreeMap::new(),
+                message_count: 5,
+                turn_count: 5,
             },
         );
 
@@ -660,6 +662,32 @@ mod tests {
         let csv = export_csv(&data, "daily", true).unwrap();
         assert!(csv.starts_with("Date,Source,InputTokens,OutputTokens,CacheReadTokens,CacheWriteTokens,ReasoningTokens,TotalTokens,CacheHitPercent,Cost,MessageCount,TurnCount\n"));
         assert!(csv.contains("2026-05-29,opencode,100,50,800,50,0,1000,84.2%,0.5000,5,5"));
+    }
+
+    #[test]
+    fn export_csv_daily_by_source_counts_are_per_source() {
+        let mut data = test_usage_data();
+        data.daily[0].source_breakdown.insert(
+            "claude".to_string(),
+            DailySourceInfo {
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                models: BTreeMap::new(),
+                message_count: 2,
+                turn_count: 2,
+            },
+        );
+        data.daily[0].source_breakdown.get_mut("opencode").unwrap().message_count = 3;
+        data.daily[0].source_breakdown.get_mut("opencode").unwrap().turn_count = 3;
+
+        let csv = export_csv(&data, "daily", true).unwrap();
+        let rows: Vec<&str> = csv.lines().skip(1).collect();
+        assert_eq!(rows.len(), 2, "one row per source");
+        let opencode = rows.iter().find(|r| r.contains(",opencode,")).unwrap();
+        let claude = rows.iter().find(|r| r.contains(",claude,")).unwrap();
+        // Each source row carries its own counts, not the day's 5/5 totals.
+        assert!(opencode.ends_with(",3,3"), "{opencode}");
+        assert!(claude.ends_with(",2,2"), "{claude}");
     }
 
     #[test]

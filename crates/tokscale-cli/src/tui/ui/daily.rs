@@ -773,6 +773,8 @@ mod tests {
                 tokens: TokenBreakdown::default(),
                 cost,
                 models,
+                            message_count: 0,
+                turn_count: 0,
             },
         );
         day

@@ -119,6 +119,10 @@ pub struct DailySourceInfo {
     pub tokens: TokenBreakdown,
     pub cost: f64,
     pub models: BTreeMap<String, DailyModelInfo>,
+    /// Messages and turn starts attributed to this source, mirroring
+    /// [`HourlySourceInfo`] so per-source rows do not repeat the day totals.
+    pub message_count: u32,
+    pub turn_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -1234,6 +1238,8 @@ impl DataLoader {
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
                         models: BTreeMap::new(),
+                        message_count: 0,
+                        turn_count: 0,
                     });
 
                 source_entry.tokens.input = source_entry
@@ -1257,6 +1263,12 @@ impl DataLoader {
                     .reasoning
                     .saturating_add(msg.tokens.reasoning.max(0) as u64);
                 source_entry.cost += msg_cost;
+                source_entry.message_count = source_entry
+                    .message_count
+                    .saturating_add(msg.message_count.max(0) as u32);
+                if msg.is_turn_start {
+                    source_entry.turn_count = source_entry.turn_count.saturating_add(1);
+                }
 
                 let daily_model_key = daily_source_model_key(
                     group_by,

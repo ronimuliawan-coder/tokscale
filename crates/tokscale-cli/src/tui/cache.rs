@@ -202,6 +202,10 @@ struct CachedDailySourceInfo {
     tokens: CachedTokenBreakdown,
     cost: f64,
     models: Vec<(String, CachedDailyModelInfo)>,
+    #[serde(default)]
+    message_count: u32,
+    #[serde(default)]
+    turn_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,6 +457,8 @@ impl From<&DailySourceInfo> for CachedDailySourceInfo {
                 .iter()
                 .map(|(key, value)| (key.clone(), value.into()))
                 .collect(),
+            message_count: source.message_count,
+            turn_count: source.turn_count,
         }
     }
 }
@@ -470,6 +476,8 @@ impl From<CachedDailySourceInfo> for DailySourceInfo {
                     (key, model_info)
                 })
                 .collect(),
+            message_count: source.message_count,
+            turn_count: source.turn_count,
         }
     }
 }
@@ -667,6 +675,10 @@ impl TryFrom<CachedDailyUsage> for DailyUsage {
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
                         models: BTreeMap::new(),
+                        // Legacy payloads carry no per-source counters; the
+                        // background refresh replaces this window.
+                        message_count: 0,
+                        turn_count: 0,
                     });
                 source.tokens.input = source.tokens.input.saturating_add(model_info.tokens.input);
                 source.tokens.output = source
