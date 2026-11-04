@@ -311,10 +311,7 @@ enum Commands {
             help = "Granularity: hourly, daily, monthly, models, clients, sessions"
         )]
         granularity: String,
-        #[arg(
-            long,
-            help = "Break down rows by source/client (for hourly, daily)"
-        )]
+        #[arg(long, help = "Break down rows by source/client (for hourly, daily)")]
         by_source: bool,
         #[arg(short, long, help = "Write output to file instead of stdout")]
         output: Option<PathBuf>,

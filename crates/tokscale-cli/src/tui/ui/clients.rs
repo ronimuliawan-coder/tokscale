@@ -183,8 +183,12 @@ fn render_client_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format_tokens(client.tokens.cache_write))
                         .style(Style::default().fg(theme_muted)),
                     Cell::from(cache_str).style(Style::default().fg(app.theme.accent)),
-                    Cell::from(format_cost_per_million(client.cost, total_tokens, app.glyphs))
-                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(format_cost_per_million(
+                        client.cost,
+                        total_tokens,
+                        app.glyphs,
+                    ))
+                    .style(Style::default().fg(theme_muted)),
                     Cell::from(client.message_count.to_string())
                         .style(Style::default().fg(theme_muted)),
                     Cell::from(client.session_count.to_string())

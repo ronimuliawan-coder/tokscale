@@ -327,11 +327,7 @@ impl SessionColumn {
             Self::CacheWrite => Cell::from(self.fit(format_tokens(s.tokens.cache_write), ctx))
                 .style(app.theme.metric_cache_write_style()),
             Self::CacheHit => Cell::from(self.fit(
-                app.format_cache(
-                    s.tokens.cache_read,
-                    s.tokens.input,
-                    s.tokens.cache_write,
-                ),
+                app.format_cache(s.tokens.cache_read, s.tokens.input, s.tokens.cache_write),
                 ctx,
             ))
             .style(app.theme.count_style()),
@@ -1057,10 +1053,10 @@ mod tests {
                 display_name: "test-model".to_string(),
                 provider: "test".to_string(),
                 color_key: "test-model".to_string(),
-                            tokens: TokenBreakdown::default(),
+                tokens: TokenBreakdown::default(),
                 cost: 0.0,
                 message_count: 0,
-}],
+            }],
             tokens: TokenBreakdown {
                 input: 1000,
                 output: 500,
@@ -1088,10 +1084,10 @@ mod tests {
             display_name: "claude-sonnet-4".to_string(),
             provider: "anthropic".to_string(),
             color_key: "claude-sonnet-4".to_string(),
-                    tokens: TokenBreakdown::default(),
+            tokens: TokenBreakdown::default(),
             cost: 0.0,
             message_count: 0,
-}];
+        }];
         s.tokens = TokenBreakdown {
             input: 1_234_567,
             output: 234_567,
@@ -1857,10 +1853,10 @@ mod tests {
                     display_name: "모".repeat(30),
                     provider: "test".to_string(),
                     color_key: "test-model".to_string(),
-                                    tokens: TokenBreakdown::default(),
+                    tokens: TokenBreakdown::default(),
                     cost: 0.0,
                     message_count: 0,
-}];
+                }];
                 let mut app = app_with(width, vec![s]);
                 let row = first_row_line(&mut app, width);
                 let cells = row.chars().filter(|c| *c == '모').count() * 2;
@@ -2108,10 +2104,10 @@ mod tests {
             display_name: "claude-sonnet-4".to_string(),
             provider: "anthropic".to_string(),
             color_key: "claude-sonnet-4".to_string(),
-                    tokens: TokenBreakdown::default(),
+            tokens: TokenBreakdown::default(),
             cost: 0.0,
             message_count: 0,
-}];
+        }];
         let mut app = app_with(200, vec![s]);
         let body = render_body(&mut app, 200, 12);
         assert!(body.contains("Model"), "expected Model header\n{body}");
@@ -2129,18 +2125,18 @@ mod tests {
                 display_name: "gpt-4o".to_string(),
                 provider: "openai".to_string(),
                 color_key: "gpt-4o".to_string(),
-                            tokens: TokenBreakdown::default(),
+                tokens: TokenBreakdown::default(),
                 cost: 0.0,
                 message_count: 0,
-},
+            },
             SessionModel {
                 display_name: "o3-mini".to_string(),
                 provider: "openai".to_string(),
                 color_key: "o3-mini".to_string(),
-                            tokens: TokenBreakdown::default(),
+                tokens: TokenBreakdown::default(),
                 cost: 0.0,
                 message_count: 0,
-},
+            },
         ];
         let mut app = app_with(220, vec![s]);
         let body = render_body(&mut app, 220, 12);
@@ -2307,18 +2303,18 @@ mod tests {
                 display_name: "gemini-2-5-flash-lite".to_string(),
                 provider: "google".to_string(),
                 color_key: "gemini-2-5-flash-lite".to_string(),
-                            tokens: TokenBreakdown::default(),
+                tokens: TokenBreakdown::default(),
                 cost: 0.0,
                 message_count: 0,
-},
+            },
             SessionModel {
                 display_name: "claude-sonnet-4-5".to_string(),
                 provider: "anthropic".to_string(),
                 color_key: "claude-sonnet-4-5".to_string(),
-                            tokens: TokenBreakdown::default(),
+                tokens: TokenBreakdown::default(),
                 cost: 0.0,
                 message_count: 0,
-},
+            },
         ];
         let mut app = app_with(width, vec![s]);
         let body = render_body(&mut app, width, 12);
@@ -2344,10 +2340,10 @@ mod tests {
             display_name: "a-very-long-model-name-that-overflows".to_string(),
             provider: "anthropic".to_string(),
             color_key: "a-very-long-model-name-that-overflows".to_string(),
-                    tokens: TokenBreakdown::default(),
+            tokens: TokenBreakdown::default(),
             cost: 0.0,
             message_count: 0,
-}];
+        }];
         let mut app = app_with(width, vec![s]);
         let body = render_body(&mut app, width, 12);
         assert!(

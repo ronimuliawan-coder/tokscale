@@ -226,9 +226,7 @@ fn current_count_label(app: &App) -> String {
             lang,
             // Cheap count: detail rows are one per model of the client.
             app.client_detail_name()
-                .and_then(|name| {
-                    app.data.clients.iter().find(|c| c.client == name)
-                })
+                .and_then(|name| app.data.clients.iter().find(|c| c.client == name))
                 .map(|client| client.models.len())
                 .unwrap_or(0),
             MessageKey::CountModels,

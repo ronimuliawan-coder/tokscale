@@ -571,8 +571,11 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(get_provider_display_name(row.provider)),
-                    Cell::from(truncate_text(&get_client_display_name(row.source), source_limit))
-                        .style(Style::default().fg(theme_muted)),
+                    Cell::from(truncate_text(
+                        &get_client_display_name(row.source),
+                        source_limit,
+                    ))
+                    .style(Style::default().fg(theme_muted)),
                     Cell::from(row.messages.to_string()),
                     Cell::from(format_tokens(row.tokens.input)).style(metric_input_style),
                     Cell::from(format_tokens(row.tokens.output)).style(metric_output_style),
@@ -1075,7 +1078,10 @@ mod tests {
             body.contains("Hourly Detail: 2026-05-29 14:00"),
             "expected detail title\n{body}"
         );
-        assert!(body.contains("claude-sonnet"), "expected claude-sonnet\n{body}");
+        assert!(
+            body.contains("claude-sonnet"),
+            "expected claude-sonnet\n{body}"
+        );
         assert!(body.contains("Anthropic"), "expected Anthropic\n{body}");
         assert!(
             !body.contains("gpt-5"),

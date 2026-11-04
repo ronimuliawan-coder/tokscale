@@ -19,8 +19,8 @@ use super::codex_login::{
     CodexLoginOutcome,
 };
 use super::data::{
-    AgentUsage, ClientUsage, DailyUsage, DataLoader, HourlyUsage, MinutelyUsage, ModelDayUsage, ModelUsage,
-    MonthlyUsage, ProjectUsage, SessionUsage, TokenBreakdown, UsageData,
+    AgentUsage, ClientUsage, DailyUsage, DataLoader, HourlyUsage, MinutelyUsage, ModelDayUsage,
+    ModelUsage, MonthlyUsage, ProjectUsage, SessionUsage, TokenBreakdown, UsageData,
 };
 use super::glyph_probe::AmbientWidth;
 use super::i18n::{format_count, tr, MessageKey, TuiLanguage};
@@ -823,17 +823,13 @@ impl App {
         // Same for Hourly-detail mode: exit if the hour disappeared, or if
         // the split-source row we opened no longer exists.
         if let Some(dt) = self.selected_hourly_detail_dt {
-            let source_alive = self
-                .data
-                .hourly
-                .iter()
-                .any(|h| {
-                    h.datetime == dt
-                        && match &self.selected_hourly_detail_source {
-                            Some(src) => h.source_breakdown.contains_key(src),
-                            None => true,
-                        }
-                });
+            let source_alive = self.data.hourly.iter().any(|h| {
+                h.datetime == dt
+                    && match &self.selected_hourly_detail_source {
+                        Some(src) => h.source_breakdown.contains_key(src),
+                        None => true,
+                    }
+            });
             if !source_alive {
                 self.selected_hourly_detail_dt = None;
                 self.selected_hourly_detail_source = None;
@@ -2366,7 +2362,7 @@ impl App {
             Tab::Agents => self.data.agents.len(),
             Tab::Clients if self.is_client_detail_active() => self
                 .client_detail_name()
-                .and_then(|name| self.data.clients.iter().find(|c| &c.client == name))
+                .and_then(|name| self.data.clients.iter().find(|c| c.client == name))
                 .map(|client| client.models.len())
                 .unwrap_or(0),
             Tab::Clients => self.data.clients.len(),
@@ -2671,8 +2667,7 @@ impl App {
             .get_sorted_hourly_rows()
             .iter()
             .position(|r| {
-                r.datetime == detail_dt
-                    && r.source.map(|s| s.to_string()) == detail_source
+                r.datetime == detail_dt && r.source.map(|s| s.to_string()) == detail_source
             })
             .unwrap_or(self.hourly_list_selected_index);
 
@@ -2876,13 +2871,11 @@ impl App {
             Tab::Models if self.is_model_detail_active() => {
                 // In the picker state there is no row to copy; detail views
                 // copy the selected row of whichever breakdown is open.
-                match self.model_detail.as_ref().map(|s| {
-                    (
-                        s.model_name.clone(),
-                        s.group_key.clone(),
-                        s.active_view,
-                    )
-                }) {
+                match self
+                    .model_detail
+                    .as_ref()
+                    .map(|s| (s.model_name.clone(), s.group_key.clone(), s.active_view))
+                {
                     Some((name, group_key, Some(view))) => match view {
                         ModelDetailViewType::Daily => self
                             .get_model_daily_rows_scoped(&name, &group_key)
@@ -3391,7 +3384,7 @@ impl App {
             let selected_source = self.selected_hourly_detail_source.as_deref();
             hour.source_breakdown
                 .iter()
-                .filter(|(source, _)| selected_source.map_or(true, |s| s == source.as_str()))
+                .filter(|(source, _)| selected_source.is_none_or(|s| s == source.as_str()))
                 .flat_map(|(source, source_info)| {
                     source_info
                         .models
@@ -3413,7 +3406,12 @@ impl App {
             // alphabetically first client.
             let client_str = match hour.clients.len() {
                 0 => "unknown",
-                1 => hour.clients.iter().next().map(|s| s.as_str()).unwrap_or("unknown"),
+                1 => hour
+                    .clients
+                    .iter()
+                    .next()
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown"),
                 _ => "mixed",
             };
             hour.models
@@ -3853,11 +3851,7 @@ impl App {
     /// Daily detail scoped to the exact Models-tab row: under the composite
     /// groupings the aggregation keys carry a workspace/provider prefix, so a
     /// plain name lookup either finds nothing or merges rows.
-    pub fn get_model_daily_rows_scoped(
-        &self,
-        model: &str,
-        group_key: &str,
-    ) -> Vec<ModelDailyRow> {
+    pub fn get_model_daily_rows_scoped(&self, model: &str, group_key: &str) -> Vec<ModelDailyRow> {
         if let Some(row) = self.resolve_model_usage_row(model, group_key) {
             if !row.daily.is_empty() {
                 return row
@@ -5051,7 +5045,7 @@ mod tests {
                 tokens: total_tokens.clone(),
                 cost: total_cost,
                 models: model_breakdown,
-                            message_count: 0,
+                message_count: 0,
                 turn_count: 0,
             },
         );

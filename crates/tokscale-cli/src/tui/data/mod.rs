@@ -300,19 +300,25 @@ impl SessionUsage {
                 .find(|m| m.display_name == model.display_name)
             {
                 Some(existing) => {
-                    existing.tokens.input = existing.tokens.input.saturating_add(model.tokens.input);
+                    existing.tokens.input =
+                        existing.tokens.input.saturating_add(model.tokens.input);
                     existing.tokens.output =
                         existing.tokens.output.saturating_add(model.tokens.output);
-                    existing.tokens.cache_read =
-                        existing.tokens.cache_read.saturating_add(model.tokens.cache_read);
-                    existing.tokens.cache_write =
-                        existing.tokens.cache_write.saturating_add(model.tokens.cache_write);
-                    existing.tokens.reasoning =
-                        existing.tokens.reasoning.saturating_add(model.tokens.reasoning);
+                    existing.tokens.cache_read = existing
+                        .tokens
+                        .cache_read
+                        .saturating_add(model.tokens.cache_read);
+                    existing.tokens.cache_write = existing
+                        .tokens
+                        .cache_write
+                        .saturating_add(model.tokens.cache_write);
+                    existing.tokens.reasoning = existing
+                        .tokens
+                        .reasoning
+                        .saturating_add(model.tokens.reasoning);
                     existing.cost += model.cost;
-                    existing.message_count = existing
-                        .message_count
-                        .saturating_add(model.message_count);
+                    existing.message_count =
+                        existing.message_count.saturating_add(model.message_count);
                 }
                 None => self.models.push(model.clone()),
             }
@@ -420,8 +426,14 @@ fn accumulate_session_entry(
         .find(|m| m.display_name == normalized_model)
     {
         Some(m) => {
-            m.tokens.input = m.tokens.input.saturating_add(msg.tokens.input.max(0) as u64);
-            m.tokens.output = m.tokens.output.saturating_add(msg.tokens.output.max(0) as u64);
+            m.tokens.input = m
+                .tokens
+                .input
+                .saturating_add(msg.tokens.input.max(0) as u64);
+            m.tokens.output = m
+                .tokens
+                .output
+                .saturating_add(msg.tokens.output.max(0) as u64);
             m.tokens.cache_read = m
                 .tokens
                 .cache_read
@@ -1801,10 +1813,10 @@ impl DataLoader {
                         display_name: normalized_model.clone(),
                         provider: msg.provider_id.clone(),
                         color_key: model_key.clone(),
-                                            tokens: TokenBreakdown::default(),
+                        tokens: TokenBreakdown::default(),
                         cost: 0.0,
                         message_count: 0,
-});
+                    });
                 }
 
                 if !is_recovery_floor && !msg.session_id.is_empty() {
@@ -5236,7 +5248,10 @@ after"#,
         assert_eq!(usage.agents.len(), 1, "the floor is not an agent");
         assert_eq!(usage.agents[0].agent, "Build");
         let client_sessions: u32 = usage.clients.iter().map(|c| c.session_count).sum();
-        assert_eq!(client_sessions, 1, "the floor's synthetic id is not a client session");
+        assert_eq!(
+            client_sessions, 1,
+            "the floor's synthetic id is not a client session"
+        );
         let hourly_input: u64 = usage.hourly.iter().map(|h| h.tokens.input).sum();
         assert_eq!(hourly_input, 100, "a day-level fill has no hour");
         let minutely_input: u64 = usage.minutely.iter().map(|m| m.tokens.input).sum();

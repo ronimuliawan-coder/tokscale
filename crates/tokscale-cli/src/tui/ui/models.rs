@@ -597,9 +597,15 @@ fn render_options_menu(frame: &mut Frame, app: &App, area: Rect) {
 
     let hint = Line::from(vec![
         Span::styled("↑↓/1-5:navigate", Style::default().fg(app.theme.muted)),
-        Span::styled(app.glyphs.spaced_separator, Style::default().fg(app.theme.muted)),
+        Span::styled(
+            app.glyphs.spaced_separator,
+            Style::default().fg(app.theme.muted),
+        ),
         Span::styled("↵:view", Style::default().fg(app.theme.accent)),
-        Span::styled(app.glyphs.spaced_separator, Style::default().fg(app.theme.muted)),
+        Span::styled(
+            app.glyphs.spaced_separator,
+            Style::default().fg(app.theme.muted),
+        ),
         Span::styled("esc:cancel", Style::default().fg(app.theme.muted)),
     ]);
     let footer_paragraph = Paragraph::new(hint).alignment(Alignment::Center);
@@ -617,9 +623,7 @@ fn render_model_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let group_key = state.group_key.clone();
 
     match view_type {
-        ModelDetailViewType::Daily => {
-            render_model_daily(frame, app, area, &model_name, &group_key)
-        }
+        ModelDetailViewType::Daily => render_model_daily(frame, app, area, &model_name, &group_key),
         ModelDetailViewType::Hourly => render_model_hourly(frame, app, area, &model_name),
         ModelDetailViewType::Clients => render_model_clients(frame, app, area, &model_name),
         ModelDetailViewType::Sessions => render_model_sessions(frame, app, area, &model_name),
@@ -870,8 +874,12 @@ fn render_model_daily(
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Cell::from(format_cost_per_million(total_cost, total_tokens, app.glyphs))
-                .style(Style::default().fg(theme_muted)),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
             Cell::from(total_messages.to_string()).style(
                 Style::default()
                     .fg(theme_muted)
@@ -1176,8 +1184,12 @@ fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name:
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Cell::from(format_cost_per_million(total_cost, total_tokens, app.glyphs))
-                .style(Style::default().fg(theme_muted)),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
             Cell::from(total_messages.to_string()).style(
                 Style::default()
                     .fg(theme_muted)
@@ -1457,8 +1469,12 @@ fn render_model_clients(frame: &mut Frame, app: &mut App, area: Rect, model_name
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Cell::from(format_cost_per_million(total_cost, total_tokens, app.glyphs))
-                .style(Style::default().fg(theme_muted)),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
             Cell::from(total_messages.to_string()).style(
                 Style::default()
                     .fg(theme_muted)
@@ -2026,8 +2042,12 @@ fn render_model_monthly(
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Cell::from(format_cost_per_million(total_cost, total_tokens, app.glyphs))
-                .style(Style::default().fg(theme_muted)),
+            Cell::from(format_cost_per_million(
+                total_cost,
+                total_tokens,
+                app.glyphs,
+            ))
+            .style(Style::default().fg(theme_muted)),
             Cell::from(total_messages.to_string()).style(
                 Style::default()
                     .fg(theme_muted)
