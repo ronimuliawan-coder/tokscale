@@ -311,7 +311,7 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
         ];
         if app.current_tab == Tab::Models {
             spans.push(Span::styled("·", Style::default().fg(app.theme.muted)));
-            if app.is_model_detail_active() {
+            if app.is_model_detail_active() || app.is_model_trend_active() {
                 spans.push(Span::styled("esc", hint_style));
             } else {
                 spans.push(Span::styled("↵", hint_style));
@@ -352,23 +352,16 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
                 spans.push(Span::styled("↵", hint_style));
             }
         }
-        if app.current_tab == Tab::Models {
-            spans.push(Span::styled(
-                app.glyphs.compact_separator,
-                Style::default().fg(app.theme.muted),
-            ));
-            if app.is_model_trend_active() {
-                spans.push(Span::styled("esc", hint_style));
-            } else {
-                spans.push(Span::styled("↵", hint_style));
-            }
-        }
         if app.current_tab == Tab::Hourly {
             spans.push(Span::styled(
                 app.glyphs.compact_separator,
                 Style::default().fg(app.theme.muted),
             ));
-            spans.push(Span::styled("v", hint_style));
+            if app.is_hourly_detail_active() {
+                spans.push(Span::styled("esc", hint_style));
+            } else {
+                spans.push(Span::styled("v", hint_style));
+            }
         }
         if app.current_tab == Tab::Sessions {
             spans.push(Span::styled(
