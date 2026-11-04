@@ -224,7 +224,13 @@ fn current_count_label(app: &App) -> String {
         }
         Tab::Clients if app.is_client_detail_active() => format_count(
             lang,
-            app.get_sorted_client_detail_rows().len(),
+            // Cheap count: detail rows are one per model of the client.
+            app.client_detail_name()
+                .and_then(|name| {
+                    app.data.clients.iter().find(|c| &c.client == name)
+                })
+                .map(|client| client.models.len())
+                .unwrap_or(0),
             MessageKey::CountModels,
         ),
         Tab::Clients => format_count(lang, app.data.clients.len(), MessageKey::CountClients),

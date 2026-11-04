@@ -2364,16 +2364,40 @@ impl App {
             }
             Tab::Overview | Tab::Models => self.data.models.len(),
             Tab::Agents => self.data.agents.len(),
-            Tab::Clients if self.is_client_detail_active() => {
-                self.get_sorted_client_detail_rows().len()
-            }
+            Tab::Clients if self.is_client_detail_active() => self
+                .client_detail_name()
+                .and_then(|name| self.data.clients.iter().find(|c| &c.client == name))
+                .map(|client| client.models.len())
+                .unwrap_or(0),
             Tab::Clients => self.data.clients.len(),
             Tab::Daily if self.is_daily_detail_active() => {
                 self.get_sorted_daily_detail_rows().len()
             }
             Tab::Daily => self.data.daily.len(),
             Tab::Hourly if self.is_hourly_detail_active() => {
-                self.get_sorted_hourly_detail_rows().len()
+                // Cheap count: rows are one per (source, model) pair — avoid
+                // rebuilding the whole row set on every 100 ms tick.
+                self.selected_hourly_detail_dt
+                    .and_then(|dt| self.data.hourly.iter().find(|h| h.datetime == dt))
+                    .map(|hour| {
+                        if hour.source_breakdown.is_empty() {
+                            hour.models.len()
+                        } else {
+                            match self.selected_hourly_detail_source.as_deref() {
+                                Some(src) => hour
+                                    .source_breakdown
+                                    .get(src)
+                                    .map(|info| info.models.len())
+                                    .unwrap_or(0),
+                                None => hour
+                                    .source_breakdown
+                                    .values()
+                                    .map(|info| info.models.len())
+                                    .sum(),
+                            }
+                        }
+                    })
+                    .unwrap_or(0)
             }
             Tab::Hourly if self.hourly_view_mode == HourlyViewMode::Profile => {
                 self.hourly_profile_total_lines
@@ -3362,8 +3386,12 @@ impl App {
         };
 
         let mut rows: Vec<HourlyDetailRow<'_>> = if !hour.source_breakdown.is_empty() {
+            // Opening a split-source row restores that source; scope the
+            // detail to it instead of listing every client's models.
+            let selected_source = self.selected_hourly_detail_source.as_deref();
             hour.source_breakdown
                 .iter()
+                .filter(|(source, _)| selected_source.map_or(true, |s| s == source.as_str()))
                 .flat_map(|(source, source_info)| {
                     source_info
                         .models
