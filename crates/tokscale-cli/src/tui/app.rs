@@ -3860,17 +3860,20 @@ impl App {
     pub fn get_model_session_rows(&self, model: &str) -> Vec<ModelSessionRow> {
         let mut rows = Vec::new();
         for s in &self.data.sessions {
-            if s.models
+            // Attribute only this model's usage: a session that switched
+            // models must not repeat its whole-session totals here.
+            if let Some(usage) = s
+                .models
                 .iter()
-                .any(|m| m.display_name == model || m.color_key == model)
+                .find(|m| m.display_name == model || m.color_key == model)
             {
                 rows.push(ModelSessionRow {
                     session_id: s.session_id.clone(),
                     client: s.client.clone(),
                     title: s.title.clone(),
-                    tokens: s.tokens.clone(),
-                    cost: s.cost,
-                    messages: s.message_count,
+                    tokens: usage.tokens.clone(),
+                    cost: usage.cost,
+                    messages: usage.message_count,
                     last_active_ms: s.last_active_ms,
                 });
             }

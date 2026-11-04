@@ -27,7 +27,7 @@ fn data_loader_scanner_settings() -> tokscale_core::scanner::ScannerSettings {
     tokscale_core::scanner::ScannerSettings::default()
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TokenBreakdown {
     pub input: u64,
     pub output: u64,
@@ -294,12 +294,27 @@ impl SessionUsage {
             }
         }
         for model in &branch.models {
-            if !self
+            match self
                 .models
-                .iter()
-                .any(|m| m.display_name == model.display_name)
+                .iter_mut()
+                .find(|m| m.display_name == model.display_name)
             {
-                self.models.push(model.clone());
+                Some(existing) => {
+                    existing.tokens.input = existing.tokens.input.saturating_add(model.tokens.input);
+                    existing.tokens.output =
+                        existing.tokens.output.saturating_add(model.tokens.output);
+                    existing.tokens.cache_read =
+                        existing.tokens.cache_read.saturating_add(model.tokens.cache_read);
+                    existing.tokens.cache_write =
+                        existing.tokens.cache_write.saturating_add(model.tokens.cache_write);
+                    existing.tokens.reasoning =
+                        existing.tokens.reasoning.saturating_add(model.tokens.reasoning);
+                    existing.cost += model.cost;
+                    existing.message_count = existing
+                        .message_count
+                        .saturating_add(model.message_count);
+                }
+                None => self.models.push(model.clone()),
             }
         }
     }
@@ -397,27 +412,64 @@ fn accumulate_session_entry(
     }
 
     // Track distinct models in first-seen order, retaining provider and
-    // color_key for correct shade-map lookups.
-    if !entry
+    // color_key for correct shade-map lookups, and attribute this message's
+    // usage to its model so model-detail rows do not repeat session totals.
+    match entry
         .models
-        .iter()
-        .any(|m| m.display_name == normalized_model)
+        .iter_mut()
+        .find(|m| m.display_name == normalized_model)
     {
-        entry.models.push(SessionModel {
-            display_name: normalized_model.to_string(),
-            provider: msg.provider_id.clone(),
-            color_key: model_key.to_string(),
-        });
+        Some(m) => {
+            m.tokens.input = m.tokens.input.saturating_add(msg.tokens.input.max(0) as u64);
+            m.tokens.output = m.tokens.output.saturating_add(msg.tokens.output.max(0) as u64);
+            m.tokens.cache_read = m
+                .tokens
+                .cache_read
+                .saturating_add(msg.tokens.cache_read.max(0) as u64);
+            m.tokens.cache_write = m
+                .tokens
+                .cache_write
+                .saturating_add(msg.tokens.cache_write.max(0) as u64);
+            m.tokens.reasoning = m
+                .tokens
+                .reasoning
+                .saturating_add(msg.tokens.reasoning.max(0) as u64);
+            m.cost += msg_cost;
+            m.message_count = m
+                .message_count
+                .saturating_add(msg.message_count.max(0) as u32);
+        }
+        None => {
+            entry.models.push(SessionModel {
+                display_name: normalized_model.to_string(),
+                provider: msg.provider_id.clone(),
+                color_key: model_key.to_string(),
+                tokens: TokenBreakdown {
+                    input: msg.tokens.input.max(0) as u64,
+                    output: msg.tokens.output.max(0) as u64,
+                    cache_read: msg.tokens.cache_read.max(0) as u64,
+                    cache_write: msg.tokens.cache_write.max(0) as u64,
+                    reasoning: msg.tokens.reasoning.max(0) as u64,
+                },
+                cost: msg_cost,
+                message_count: msg.message_count.max(0) as u32,
+            });
+        }
     }
 }
 
 /// A model entry within a session, retaining the provider and color_key
-/// needed for correct family-shade color lookup alongside the display name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// needed for correct family-shade color lookup alongside the display name,
+/// plus the usage attributed specifically to this model so model-detail rows
+/// do not repeat session-wide totals.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionModel {
     pub display_name: String,
     pub provider: String,
     pub color_key: String,
+    pub tokens: TokenBreakdown,
+    pub cost: f64,
+    pub message_count: u32,
 }
 
 /// Per-project (workspace) usage rollup. One row per workspace grouping key
@@ -1749,7 +1801,10 @@ impl DataLoader {
                         display_name: normalized_model.clone(),
                         provider: msg.provider_id.clone(),
                         color_key: model_key.clone(),
-                    });
+                                            tokens: TokenBreakdown::default(),
+                        cost: 0.0,
+                        message_count: 0,
+});
                 }
 
                 if !is_recovery_floor && !msg.session_id.is_empty() {
@@ -4714,15 +4769,35 @@ after"#,
         assert_eq!(
             usage.sessions[0].models,
             vec![
+                // Two messages normalized to one display name: usage sums,
+                // provider stays first-seen.
                 SessionModel {
                     display_name: "claude-sonnet-4-5".to_string(),
                     provider: "anthropic".to_string(),
                     color_key: "claude-sonnet-4-5".to_string(),
+                    tokens: TokenBreakdown {
+                        input: 20,
+                        output: 10,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    cost: 2.0,
+                    message_count: 2,
                 },
                 SessionModel {
                     display_name: "gpt-5".to_string(),
                     provider: "openai".to_string(),
                     color_key: "gpt-5".to_string(),
+                    tokens: TokenBreakdown {
+                        input: 10,
+                        output: 5,
+                        cache_read: 0,
+                        cache_write: 0,
+                        reasoning: 0,
+                    },
+                    cost: 1.0,
+                    message_count: 1,
                 },
             ]
         );
