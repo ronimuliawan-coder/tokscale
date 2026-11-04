@@ -453,7 +453,11 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let metric_cache_write_style = app.theme.metric_cache_write_style();
     let striped_row_style = app.theme.striped_row_style();
 
-    let header_cells = if is_very_narrow {
+    // Mid tier (80-139 cols): the wide layout needs ~141 columns and clips;
+    // drop the provider column so rows fit.
+    let drop_provider = !is_narrow && !is_very_narrow && inner.width < 141;
+
+    let mut header_cells = if is_very_narrow {
         vec!["Model", "Cost"]
     } else if is_narrow {
         vec!["Model", "Source", "Msgs", "Tokens", "Cost"]
@@ -473,6 +477,9 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             "Cost",
         ]
     };
+    if drop_provider {
+        header_cells.remove(2);
+    };
 
     let sort_indicator = |field: SortField| -> &'static str {
         if sort_field == field {
@@ -491,8 +498,10 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             .enumerate()
             .map(|(i, h)| {
                 let indicator = match (i, is_narrow, is_very_narrow) {
-                    (10, false, false) => sort_indicator(SortField::Tokens),
-                    (11, false, false) => sort_indicator(SortField::Cost),
+                    (10, false, false) if !drop_provider => sort_indicator(SortField::Tokens),
+                    (11, false, false) if !drop_provider => sort_indicator(SortField::Cost),
+                    (9, false, false) if drop_provider => sort_indicator(SortField::Tokens),
+                    (10, false, false) if drop_provider => sort_indicator(SortField::Cost),
                     (3, true, false) => sort_indicator(SortField::Tokens),
                     (4, true, false) => sort_indicator(SortField::Cost),
                     (1, _, true) => sort_indicator(SortField::Cost),
@@ -584,6 +593,10 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                 Style::default()
             };
 
+            let mut cells = cells;
+            if drop_provider {
+                cells.remove(2);
+            }
             Row::new(cells).style(row_style).height(1)
         })
         .collect();
@@ -597,6 +610,20 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Percentage(12),
             Constraint::Percentage(15),
             Constraint::Percentage(13),
+        ]
+    } else if drop_provider {
+        vec![
+            Constraint::Length(2),
+            Constraint::Min(10),
+            Constraint::Length(8),
+            Constraint::Length(4),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
         ]
     } else {
         vec![
@@ -1035,7 +1062,9 @@ mod tests {
         assert_eq!(detail_rows[0].model, "gpt-5");
         assert_eq!(detail_rows[1].model, "claude-sonnet");
 
-        let body = render_lines(&mut app, 140, 20).join("\n");
+        // Render wide enough for the full layout: below ~141 columns the
+        // detail view drops the provider column (mid tier).
+        let body = render_lines(&mut app, 144, 20).join("\n");
         assert!(
             body.contains("Hourly Detail: 2026-05-29 14:00"),
             "expected detail title\n{body}"

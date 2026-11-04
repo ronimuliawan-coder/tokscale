@@ -1056,6 +1056,22 @@ fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name:
             Constraint::Length(12),
             Constraint::Length(10),
         ]
+    } else if inner.width < 125 {
+        // Mid tier: the wide layout needs ~125 columns and clips at 80-124;
+        // drop the trailing messages column and shrink the metrics.
+        vec![
+            Constraint::Length(2),
+            Constraint::Min(10),
+            Constraint::Length(8),
+            Constraint::Length(4),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
+        ]
     } else {
         vec![
             Constraint::Length(3),

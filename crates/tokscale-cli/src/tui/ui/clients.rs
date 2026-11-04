@@ -214,6 +214,22 @@ fn render_client_list(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(8),
             Constraint::Length(6),
         ]
+    } else if inner.width < 127 {
+        // Mid tier: the wide layout needs ~127 columns (99 fixed + name +
+        // gaps + borders) and clips at 80-126; drop the $/M, messages and
+        // sessions columns and shrink the rest so rows fit.
+        vec![
+            Constraint::Length(2),
+            Constraint::Min(12),
+            Constraint::Length(6),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+        ]
     } else {
         vec![
             Constraint::Length(3),
