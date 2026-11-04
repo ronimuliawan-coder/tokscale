@@ -495,6 +495,10 @@ pub struct App {
     monthly_list_scroll_offset: usize,
 
     pub selected_hourly_detail_dt: Option<NaiveDateTime>,
+    /// Source of the row the hourly detail was opened from; with split
+    /// sources several rows share a datetime, so restoring by datetime alone
+    /// would land on the wrong one.
+    pub selected_hourly_detail_source: Option<String>,
     hourly_list_selected_index: usize,
     hourly_list_scroll_offset: usize,
     pub hourly_split_sources: bool,
@@ -694,6 +698,7 @@ impl App {
             monthly_list_selected_index: 0,
             monthly_list_scroll_offset: 0,
             selected_hourly_detail_dt: None,
+            selected_hourly_detail_source: None,
             hourly_list_selected_index: 0,
             hourly_list_scroll_offset: 0,
             hourly_split_sources: true,
@@ -820,13 +825,57 @@ impl App {
             }
         }
 
-        // Same for Hourly-detail mode: exit if the hour disappeared.
+        // Same for Hourly-detail mode: exit if the hour disappeared, or if
+        // the split-source row we opened no longer exists.
         if let Some(dt) = self.selected_hourly_detail_dt {
-            if !self.data.hourly.iter().any(|h| h.datetime == dt) {
+            let source_alive = self
+                .data
+                .hourly
+                .iter()
+                .any(|h| {
+                    h.datetime == dt
+                        && match &self.selected_hourly_detail_source {
+                            Some(src) => h.source_breakdown.contains_key(src),
+                            None => true,
+                        }
+                });
+            if !source_alive {
                 self.selected_hourly_detail_dt = None;
+                self.selected_hourly_detail_source = None;
                 self.selected_index = self.hourly_list_selected_index;
                 self.scroll_offset = self.hourly_list_scroll_offset;
             }
+        }
+
+        // Same for Clients-detail mode: exit if the refresh dropped the
+        // client we were viewing.
+        if let Some(ref client) = self.selected_client_detail {
+            if !self.data.clients.iter().any(|c| &c.client == client) {
+                self.selected_client_detail = None;
+                self.selected_index = self.client_list_selected_index;
+                self.scroll_offset = self.client_list_scroll_offset;
+            }
+        }
+
+        // Same for the model-detail menu and its views: exit if the model
+        // disappeared. Model detail does not borrow the models-list sort, so
+        // no sort restore is needed (unlike the trend above).
+        if let Some(ref state) = self.model_detail {
+            if !self
+                .get_sorted_models()
+                .iter()
+                .any(|m| m.model == state.model_name)
+            {
+                self.model_detail = None;
+                self.selected_index = self.models_list_selected_index;
+                self.scroll_offset = self.models_list_scroll_offset;
+            }
+        }
+
+        // A refresh to empty hourly data must reset the profile line count
+        // before clamping, or stale navigation state survives.
+        if self.data.hourly.is_empty() {
+            self.hourly_profile_total_lines = 0;
         }
 
         self.clamp_selection();
@@ -2079,6 +2128,7 @@ impl App {
         self.daily_list_selected_index = 0;
         self.daily_list_scroll_offset = 0;
         self.selected_hourly_detail_dt = None;
+        self.selected_hourly_detail_source = None;
         self.hourly_list_selected_index = 0;
         self.hourly_list_scroll_offset = 0;
         self.selected_monthly_detail_month = None;
@@ -2112,6 +2162,7 @@ impl App {
         }
         if target != Tab::Hourly {
             self.selected_hourly_detail_dt = None;
+            self.selected_hourly_detail_source = None;
         }
         if target != Tab::Monthly {
             self.selected_monthly_detail_month = None;
@@ -2548,15 +2599,18 @@ impl App {
             return;
         }
 
-        let selected_dt = {
+        let selected = {
             let hourly_rows = self.get_sorted_hourly_rows();
-            hourly_rows.get(self.selected_index).map(|r| r.datetime)
+            hourly_rows
+                .get(self.selected_index)
+                .map(|r| (r.datetime, r.source.map(|s| s.to_string())))
         };
 
-        if let Some(dt) = selected_dt {
+        if let Some((dt, source)) = selected {
             self.hourly_list_selected_index = self.selected_index;
             self.hourly_list_scroll_offset = self.scroll_offset;
             self.selected_hourly_detail_dt = Some(dt);
+            self.selected_hourly_detail_source = source;
             self.selected_index = 0;
             self.scroll_offset = 0;
             self.set_status(&format!(
@@ -2571,13 +2625,18 @@ impl App {
         let Some(detail_dt) = self.selected_hourly_detail_dt else {
             return;
         };
+        let detail_source = self.selected_hourly_detail_source.clone();
 
         self.selected_hourly_detail_dt = None;
+        self.selected_hourly_detail_source = None;
 
         let restored_index = self
             .get_sorted_hourly_rows()
             .iter()
-            .position(|r| r.datetime == detail_dt)
+            .position(|r| {
+                r.datetime == detail_dt
+                    && r.source.map(|s| s.to_string()) == detail_source
+            })
             .unwrap_or(self.hourly_list_selected_index);
 
         self.selected_index = restored_index;
