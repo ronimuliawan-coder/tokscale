@@ -524,13 +524,16 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
     y += 1;
     if y < y_max {
         let (daily_burn, projected_30d) = if !app.data.daily.is_empty() {
-            let mut sorted_daily = app.data.daily.clone();
-            sorted_daily.sort_by_key(|d| d.date);
-            let max_date = sorted_daily.last().unwrap().date;
-            let min_date_7d = max_date - chrono::Duration::days(6);
-            let last_7_days_cost: f64 = sorted_daily
+            // Anchor the window to today, not the last recorded day: a burn
+            // rate based on a week-old session would project spend that is
+            // no longer happening.
+            let today = chrono::Local::now().date_naive();
+            let min_date_7d = today - chrono::Duration::days(6);
+            let last_7_days_cost: f64 = app
+                .data
+                .daily
                 .iter()
-                .filter(|d| d.date >= min_date_7d && d.date <= max_date)
+                .filter(|d| d.date >= min_date_7d && d.date <= today)
                 .map(|d| d.cost)
                 .sum();
             let burn = last_7_days_cost / 7.0;
@@ -1146,8 +1149,10 @@ mod tests {
             group_key: String::new(),
             daily: Vec::new(),
         }];
+        // Within the anchored 7-day window, so the burn rate is nonzero.
+        let today = chrono::Local::now().date_naive();
         app.data.daily = vec![DailyUsage {
-            date: NaiveDate::from_ymd_opt(2026, 5, 29).unwrap(),
+            date: today,
             tokens: TokenBreakdown {
                 input: 200,
                 output: 100,
