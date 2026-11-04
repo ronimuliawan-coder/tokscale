@@ -707,7 +707,7 @@ fn validate_offline_command(command: Option<&Commands>) -> Result<()> {
         None | Some(Commands::Models { .. } | Commands::Monthly { .. }
             | Commands::Hourly { .. } | Commands::Clients { .. } | Commands::Graph { .. }
             | Commands::Tui { .. } | Commands::TimeMetrics { .. } | Commands::WarmTuiCache
-            | Commands::Wrapped { .. } | Commands::Config { .. }) => Ok(()),
+            | Commands::Wrapped { .. } | Commands::Config { .. } | Commands::Export { .. }) => Ok(()),
         Some(Commands::Pricing { model_id, .. }) if !model_id.eq_ignore_ascii_case("refresh") => Ok(()),
         Some(Commands::Import { submit: false, .. }) => Ok(()),
         Some(Commands::Report { no_summarize: true, .. }) => Ok(()),
@@ -962,6 +962,7 @@ fn main() -> Result<()> {
             date,
             no_spinner,
         }) => {
+            reject_unsupported_home_override(&cli.home, "export")?;
             let clients = build_client_filter(clients, &cli.home);
             run_export_command(ExportOptions {
                 format,
