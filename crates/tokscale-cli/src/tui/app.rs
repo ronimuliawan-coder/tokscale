@@ -3246,12 +3246,14 @@ impl App {
                 })
                 .collect()
         } else {
-            let client_str = hour
-                .clients
-                .iter()
-                .next()
-                .map(|s| s.as_str())
-                .unwrap_or("unknown");
+            // Legacy cache payloads without a source breakdown have no
+            // per-model client truth; label honestly instead of pinning the
+            // alphabetically first client.
+            let client_str = match hour.clients.len() {
+                0 => "unknown",
+                1 => hour.clients.iter().next().map(|s| s.as_str()).unwrap_or("unknown"),
+                _ => "mixed",
+            };
             hour.models
                 .values()
                 .map(|model_info| HourlyDetailRow {
@@ -3744,7 +3746,13 @@ impl App {
             }
             if hour.source_breakdown.is_empty() {
                 if let Some(m_info) = hour.models.get(model) {
-                    let src = hour.clients.iter().cloned().collect::<Vec<_>>().join(", ");
+                    // Legacy payload without a source breakdown: attribute
+                    // honestly rather than listing every client.
+                    let src = match hour.clients.len() {
+                        0 => "unknown".to_string(),
+                        1 => hour.clients.iter().next().cloned().unwrap_or_default(),
+                        _ => "mixed".to_string(),
+                    };
                     rows.push(ModelHourlyRow {
                         datetime: hour.datetime,
                         source: if src.is_empty() {

@@ -22,7 +22,7 @@ use super::data::{
 
 /// Cache staleness threshold: 5 minutes (matches TS implementation)
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
-const CACHE_SCHEMA_VERSION: u32 = 12;
+const CACHE_SCHEMA_VERSION: u32 = 13;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -812,67 +812,6 @@ impl From<CachedClientUsage> for ClientUsage {
     }
 }
 
-fn reconstruct_clients_from_models(models: &[ModelUsage]) -> Vec<ClientUsage> {
-    let mut map: BTreeMap<String, ClientUsage> = BTreeMap::new();
-    for m in models {
-        let entry = map.entry(m.client.clone()).or_insert_with(|| ClientUsage {
-            client: m.client.clone(),
-            tokens: TokenBreakdown::default(),
-            cost: 0.0,
-            message_count: 0,
-            session_count: 0,
-            turn_count: 0,
-            models: BTreeMap::new(),
-            first_active_ms: 0,
-            last_active_ms: 0,
-        });
-        entry.tokens.input = entry.tokens.input.saturating_add(m.tokens.input);
-        entry.tokens.output = entry.tokens.output.saturating_add(m.tokens.output);
-        entry.tokens.cache_read = entry.tokens.cache_read.saturating_add(m.tokens.cache_read);
-        entry.tokens.cache_write = entry
-            .tokens
-            .cache_write
-            .saturating_add(m.tokens.cache_write);
-        entry.tokens.reasoning = entry.tokens.reasoning.saturating_add(m.tokens.reasoning);
-        entry.cost += m.cost;
-        entry.session_count = entry.session_count.saturating_add(m.session_count);
-
-        let model_entry = entry
-            .models
-            .entry(m.model.clone())
-            .or_insert_with(|| ClientModelInfo {
-                provider: m.provider.clone(),
-                display_name: m.model.clone(),
-                color_key: m.color_key.clone(),
-                tokens: TokenBreakdown::default(),
-                cost: 0.0,
-                message_count: 0,
-            });
-        model_entry.tokens.input = model_entry.tokens.input.saturating_add(m.tokens.input);
-        model_entry.tokens.output = model_entry.tokens.output.saturating_add(m.tokens.output);
-        model_entry.tokens.cache_read = model_entry
-            .tokens
-            .cache_read
-            .saturating_add(m.tokens.cache_read);
-        model_entry.tokens.cache_write = model_entry
-            .tokens
-            .cache_write
-            .saturating_add(m.tokens.cache_write);
-        model_entry.tokens.reasoning = model_entry
-            .tokens
-            .reasoning
-            .saturating_add(m.tokens.reasoning);
-        model_entry.cost += m.cost;
-    }
-    let mut list: Vec<ClientUsage> = map.into_values().collect();
-    list.sort_by(|a, b| {
-        b.cost
-            .total_cmp(&a.cost)
-            .then_with(|| b.tokens.total().cmp(&a.tokens.total()))
-    });
-    list
-}
-
 impl From<&ContributionDay> for CachedContributionDay {
     fn from(c: &ContributionDay) -> Self {
         Self {
@@ -960,11 +899,12 @@ impl TryFrom<CachedUsageData> for UsageData {
         let daily = daily?;
         let monthly = aggregate_monthly_from_daily(&daily);
         let models: Vec<ModelUsage> = u.models.into_iter().map(|m| m.into()).collect();
-        let clients = if u.clients.is_empty() {
-            reconstruct_clients_from_models(&models)
-        } else {
-            u.clients.into_iter().map(|c| c.into()).collect()
-        };
+        // Payloads written before the clients field existed deserialize empty.
+        // Model-derived client rows would double-count sessions and zero out
+        // message/turn counters, so leave the list empty — the background
+        // load scheduled on every startup refreshes it, matching the
+        // minutely/sessions/projects convention.
+        let clients: Vec<ClientUsage> = u.clients.into_iter().map(|c| c.into()).collect();
 
         Ok(Self {
             models,
@@ -1724,7 +1664,7 @@ mod tests {
             &cache_path,
             with_current_generation(
                 r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,
@@ -2003,7 +1943,7 @@ mod tests {
             &cache_path,
             with_current_generation(
                 r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude", "cursor"],
   "includeSynthetic": false,
@@ -2252,7 +2192,7 @@ mod tests {
     }
 
     const LEGACY_FALLBACK_PAYLOAD: &str = r#"{
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "timestamp": 9999999999999,
   "enabledClients": ["claude"],
   "includeSynthetic": false,
