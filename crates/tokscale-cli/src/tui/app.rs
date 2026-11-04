@@ -1404,7 +1404,9 @@ impl App {
                 self.open_selected_daily_detail();
             }
             KeyCode::Enter
-                if self.current_tab == Tab::Hourly && !self.is_hourly_detail_active() =>
+                if self.current_tab == Tab::Hourly
+                    && !self.is_hourly_detail_active()
+                    && self.hourly_view_mode == HourlyViewMode::Table =>
             {
                 self.open_selected_hourly_detail();
             }
