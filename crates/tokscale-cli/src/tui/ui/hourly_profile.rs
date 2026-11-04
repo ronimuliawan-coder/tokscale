@@ -563,6 +563,6 @@ mod tests {
         assert!(body.contains("OpenCode"));
         assert!(body.contains("84.2%")); // 800 / (100 + 800 + 50) = 800 / 950 = 84.2%
         assert!(body.contains("Peak:"));
-        assert_eq!(app.hourly_profile_total_lines > 0, true);
+        assert!(app.hourly_profile_total_lines > 0);
     }
 }
