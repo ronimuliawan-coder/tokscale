@@ -41,6 +41,7 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
                 "output": m.tokens.output,
                 "cacheRead": m.tokens.cache_read,
                 "cacheWrite": m.tokens.cache_write,
+                "reasoning": m.tokens.reasoning,
                 "total": m.tokens.total()
             },
             "cacheHitPercent": cache_hit_pct(m.tokens.cache_read, m.tokens.input, m.tokens.cache_write),
@@ -74,6 +75,7 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
                 "output": a.tokens.output,
                 "cacheRead": a.tokens.cache_read,
                 "cacheWrite": a.tokens.cache_write,
+                "reasoning": a.tokens.reasoning,
                 "total": a.tokens.total()
             },
             "cost": a.cost,
@@ -86,6 +88,7 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
                 "output": d.tokens.output,
                 "cacheRead": d.tokens.cache_read,
                 "cacheWrite": d.tokens.cache_write,
+                "reasoning": d.tokens.reasoning,
                 "total": d.tokens.total()
             },
             "cacheHitPercent": cache_hit_pct(d.tokens.cache_read, d.tokens.input, d.tokens.cache_write),
@@ -115,6 +118,7 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
                 "output": m.tokens.output,
                 "cacheRead": m.tokens.cache_read,
                 "cacheWrite": m.tokens.cache_write,
+                "reasoning": m.tokens.reasoning,
                 "total": m.tokens.total()
             },
             "cacheHitPercent": cache_hit_pct(m.tokens.cache_read, m.tokens.input, m.tokens.cache_write),
@@ -131,6 +135,7 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
                 "output": s.tokens.output,
                 "cacheRead": s.tokens.cache_read,
                 "cacheWrite": s.tokens.cache_write,
+                "reasoning": s.tokens.reasoning,
                 "total": s.tokens.total()
             },
             "cacheHitPercent": cache_hit_pct(s.tokens.cache_read, s.tokens.input, s.tokens.cache_write),
