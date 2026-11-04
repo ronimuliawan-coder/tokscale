@@ -293,6 +293,11 @@ impl ModelDetailViewType {
 #[derive(Debug, Clone)]
 pub struct ModelDetailState {
     pub model_name: String,
+    /// The aggregation key of the Models-tab row this detail was opened
+    /// from. Unique per row under every grouping (workspace-prefixed under
+    /// `WorkspaceModel`, provider-prefixed under `ClientProviderModel`), so
+    /// detail queries do not merge rows that share a model name.
+    pub group_key: String,
     pub provider: String,
     pub color_key: String,
     pub active_view: Option<ModelDetailViewType>,
@@ -854,7 +859,7 @@ impl App {
             if !self
                 .get_sorted_models()
                 .iter()
-                .any(|m| m.model == state.model_name)
+                .any(|m| m.group_key == state.group_key || m.model == state.model_name)
             {
                 self.model_detail = None;
                 self.selected_index = self.models_list_selected_index;
@@ -2847,14 +2852,16 @@ impl App {
             Tab::Models if self.is_model_detail_active() => {
                 // In the picker state there is no row to copy; detail views
                 // copy the selected row of whichever breakdown is open.
-                match self
-                    .model_detail
-                    .as_ref()
-                    .map(|s| (s.model_name.clone(), s.active_view))
-                {
-                    Some((name, Some(view))) => match view {
+                match self.model_detail.as_ref().map(|s| {
+                    (
+                        s.model_name.clone(),
+                        s.group_key.clone(),
+                        s.active_view,
+                    )
+                }) {
+                    Some((name, group_key, Some(view))) => match view {
                         ModelDetailViewType::Daily => self
-                            .get_model_daily_rows(&name)
+                            .get_model_daily_rows_scoped(&name, &group_key)
                             .get(self.selected_index)
                             .map(|d| {
                                 format!("{}: {} tokens, ${:.4}", d.date, d.tokens.total(), d.cost)
@@ -2895,7 +2902,7 @@ impl App {
                                 )
                             }),
                         ModelDetailViewType::Monthly => self
-                            .get_model_monthly_rows(&name)
+                            .get_model_monthly_rows(&name, &group_key)
                             .get(self.selected_index)
                             .map(|d| {
                                 format!("{}: {} tokens, ${:.4}", d.month, d.tokens.total(), d.cost)
@@ -3720,16 +3727,22 @@ impl App {
 
         let selected = {
             let sorted = self.get_sorted_models();
-            sorted
-                .get(self.selected_index)
-                .map(|m| (m.model.clone(), m.provider.clone(), m.color_key.clone()))
+            sorted.get(self.selected_index).map(|m| {
+                (
+                    m.model.clone(),
+                    m.group_key.clone(),
+                    m.provider.clone(),
+                    m.color_key.clone(),
+                )
+            })
         };
 
-        if let Some((model_name, provider, color_key)) = selected {
+        if let Some((model_name, group_key, provider, color_key)) = selected {
             self.models_list_selected_index = self.selected_index;
             self.models_list_scroll_offset = self.scroll_offset;
             self.model_detail = Some(ModelDetailState {
                 model_name: model_name.clone(),
+                group_key,
                 provider,
                 color_key,
                 active_view: None,
@@ -3778,7 +3791,9 @@ impl App {
             return 0;
         };
         match state.active_view {
-            Some(ModelDetailViewType::Daily) => self.get_model_daily_rows(&state.model_name).len(),
+            Some(ModelDetailViewType::Daily) => self
+                .get_model_daily_rows_scoped(&state.model_name, &state.group_key)
+                .len(),
             Some(ModelDetailViewType::Hourly) => {
                 self.get_model_hourly_rows(&state.model_name).len()
             }
@@ -3788,11 +3803,48 @@ impl App {
             Some(ModelDetailViewType::Sessions) => {
                 self.get_model_session_rows(&state.model_name).len()
             }
-            Some(ModelDetailViewType::Monthly) => {
-                self.get_model_monthly_rows(&state.model_name).len()
-            }
+            Some(ModelDetailViewType::Monthly) => self
+                .get_model_monthly_rows(&state.model_name, &state.group_key)
+                .len(),
             None => 0,
         }
+    }
+
+    /// Resolves the Models-tab row the detail state was opened from. The
+    /// group_key is unique per row under every grouping; the name fallback
+    /// keeps stale states working after a grouping change or a cache-only
+    /// load (row-level daily splits are rebuilt on refresh, not cached).
+    fn resolve_model_usage_row(&self, model: &str, group_key: &str) -> Option<&ModelUsage> {
+        self.data
+            .models
+            .iter()
+            .find(|m| m.group_key == group_key)
+            .or_else(|| self.data.models.iter().find(|m| m.model == model))
+    }
+
+    /// Daily detail scoped to the exact Models-tab row: under the composite
+    /// groupings the aggregation keys carry a workspace/provider prefix, so a
+    /// plain name lookup either finds nothing or merges rows.
+    pub fn get_model_daily_rows_scoped(
+        &self,
+        model: &str,
+        group_key: &str,
+    ) -> Vec<ModelDailyRow> {
+        if let Some(row) = self.resolve_model_usage_row(model, group_key) {
+            if !row.daily.is_empty() {
+                return row
+                    .daily
+                    .iter()
+                    .map(|d| ModelDailyRow {
+                        date: d.date,
+                        tokens: d.tokens.clone(),
+                        cost: d.cost,
+                        messages: d.messages,
+                    })
+                    .collect();
+            }
+        }
+        self.get_model_daily_rows(model)
     }
 
     pub fn get_model_daily_rows(&self, model: &str) -> Vec<ModelDailyRow> {
@@ -4036,8 +4088,8 @@ impl App {
         rows
     }
 
-    pub fn get_model_monthly_rows(&self, model: &str) -> Vec<ModelMonthlyRow> {
-        let daily_rows = self.get_model_daily_rows(model);
+    pub fn get_model_monthly_rows(&self, model: &str, group_key: &str) -> Vec<ModelMonthlyRow> {
+        let daily_rows = self.get_model_daily_rows_scoped(model, group_key);
         let mut month_map: std::collections::BTreeMap<String, (TokenBreakdown, f64, u64)> =
             std::collections::BTreeMap::new();
         for dr in daily_rows {

@@ -614,17 +614,28 @@ fn render_model_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let model_name = state.model_name.clone();
+    let group_key = state.group_key.clone();
 
     match view_type {
-        ModelDetailViewType::Daily => render_model_daily(frame, app, area, &model_name),
+        ModelDetailViewType::Daily => {
+            render_model_daily(frame, app, area, &model_name, &group_key)
+        }
         ModelDetailViewType::Hourly => render_model_hourly(frame, app, area, &model_name),
         ModelDetailViewType::Clients => render_model_clients(frame, app, area, &model_name),
         ModelDetailViewType::Sessions => render_model_sessions(frame, app, area, &model_name),
-        ModelDetailViewType::Monthly => render_model_monthly(frame, app, area, &model_name),
+        ModelDetailViewType::Monthly => {
+            render_model_monthly(frame, app, area, &model_name, &group_key)
+        }
     }
 }
 
-fn render_model_daily(frame: &mut Frame, app: &mut App, area: Rect, model_name: &str) {
+fn render_model_daily(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    model_name: &str,
+    group_key: &str,
+) {
     let title = format!(" Model Detail: {} (Daily) ", model_name);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -641,7 +652,7 @@ fn render_model_daily(frame: &mut Frame, app: &mut App, area: Rect, model_name: 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let rows_data = app.get_model_daily_rows(model_name);
+    let rows_data = app.get_model_daily_rows_scoped(model_name, group_key);
     let visible_height = inner.height.saturating_sub(2) as usize;
     app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
@@ -1778,7 +1789,13 @@ fn render_model_sessions(frame: &mut Frame, app: &mut App, area: Rect, model_nam
     }
 }
 
-fn render_model_monthly(frame: &mut Frame, app: &mut App, area: Rect, model_name: &str) {
+fn render_model_monthly(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    model_name: &str,
+    group_key: &str,
+) {
     let title = format!(" Model Detail: {} (Monthly) ", model_name);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1795,7 +1812,7 @@ fn render_model_monthly(frame: &mut Frame, app: &mut App, area: Rect, model_name
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let rows_data = app.get_model_monthly_rows(model_name);
+    let rows_data = app.get_model_monthly_rows(model_name, group_key);
     let visible_height = inner.height.saturating_sub(2) as usize;
     app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
