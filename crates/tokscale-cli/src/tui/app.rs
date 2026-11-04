@@ -2839,6 +2839,66 @@ impl App {
                 .get_sorted_model_trend_rows()
                 .get(self.selected_index)
                 .map(|d| format!("{}: {} tokens, ${:.4}", d.date, d.tokens.total(), d.cost)),
+            Tab::Models if self.is_model_detail_active() => {
+                // In the picker state there is no row to copy; detail views
+                // copy the selected row of whichever breakdown is open.
+                match self
+                    .model_detail
+                    .as_ref()
+                    .map(|s| (s.model_name.clone(), s.active_view))
+                {
+                    Some((name, Some(view))) => match view {
+                        ModelDetailViewType::Daily => self
+                            .get_model_daily_rows(&name)
+                            .get(self.selected_index)
+                            .map(|d| {
+                                format!("{}: {} tokens, ${:.4}", d.date, d.tokens.total(), d.cost)
+                            }),
+                        ModelDetailViewType::Hourly => self
+                            .get_model_hourly_rows(&name)
+                            .get(self.selected_index)
+                            .map(|d| {
+                                format!(
+                                    "{} / {}: {} tokens, ${:.4}",
+                                    d.source,
+                                    d.datetime.format("%Y-%m-%d %H:%M"),
+                                    d.tokens.total(),
+                                    d.cost
+                                )
+                            }),
+                        ModelDetailViewType::Clients => self
+                            .get_model_client_rows(&name)
+                            .get(self.selected_index)
+                            .map(|d| {
+                                format!(
+                                    "{}: {} tokens, ${:.4}",
+                                    d.display_name,
+                                    d.tokens.total(),
+                                    d.cost
+                                )
+                            }),
+                        ModelDetailViewType::Sessions => self
+                            .get_model_session_rows(&name)
+                            .get(self.selected_index)
+                            .map(|d| {
+                                format!(
+                                    "{} / {}: {} tokens, ${:.4}",
+                                    d.client,
+                                    d.title.as_deref().unwrap_or(&d.session_id),
+                                    d.tokens.total(),
+                                    d.cost
+                                )
+                            }),
+                        ModelDetailViewType::Monthly => self
+                            .get_model_monthly_rows(&name)
+                            .get(self.selected_index)
+                            .map(|d| {
+                                format!("{}: {} tokens, ${:.4}", d.month, d.tokens.total(), d.cost)
+                            }),
+                    },
+                    _ => None,
+                }
+            }
             Tab::Overview | Tab::Models => self
                 .get_sorted_models()
                 .get(self.selected_index)
