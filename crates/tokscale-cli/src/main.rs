@@ -313,7 +313,7 @@ enum Commands {
         granularity: String,
         #[arg(
             long,
-            help = "Break down rows by source/client (for hourly, daily, monthly)"
+            help = "Break down rows by source/client (for hourly, daily)"
         )]
         by_source: bool,
         #[arg(short, long, help = "Write output to file instead of stdout")]

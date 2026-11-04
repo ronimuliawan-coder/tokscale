@@ -199,6 +199,9 @@ pub fn export_csv(data: &UsageData, granularity: &str, by_source: bool) -> Resul
             }
         }
         "monthly" => {
+            if by_source {
+                bail!("--by-source is not supported for the monthly granularity; supported: hourly, daily");
+            }
             out.push_str("Month,InputTokens,OutputTokens,CacheReadTokens,CacheWriteTokens,ReasoningTokens,TotalTokens,CacheHitPercent,Cost,MessageCount,TurnCount\n");
             let mut sorted_monthly = data.monthly.clone();
             sorted_monthly.sort_by(|a, b| a.month.cmp(&b.month));
@@ -754,6 +757,13 @@ mod tests {
         let csv_src = export_csv(&data, "hourly", true).unwrap();
         assert!(csv_src.starts_with("Timestamp,Source,InputTokens,OutputTokens,CacheReadTokens,CacheWriteTokens,ReasoningTokens,TotalTokens,CacheHitPercent,Cost,MessageCount,TurnCount\n"));
         assert!(csv_src.contains("2026-05-29 14:00,opencode,100,50,800,50,0,1000,84.2%,0.5000,5,5"));
+    }
+
+    #[test]
+    fn export_csv_monthly_rejects_by_source() {
+        let data = test_usage_data();
+        let err = export_csv(&data, "monthly", true).unwrap_err();
+        assert!(err.to_string().contains("--by-source is not supported"), "{err}");
     }
 
     #[test]
