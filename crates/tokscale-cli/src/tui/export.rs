@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde_json::json;
 
-use super::data::UsageData;
+use super::data::{prompt_total_u128, UsageData};
 
 fn cache_hit_pct(read: u64, input: u64, write: u64) -> f64 {
-    let total_prompt = input + read + write;
+    let total_prompt = prompt_total_u128(input, read, write);
     if total_prompt > 0 {
         ((read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
     } else {
@@ -25,9 +25,9 @@ pub fn build_export_json(data: &UsageData) -> Result<String> {
             .iter()
             .fold((0u64, 0u64, 0u64), |(i, cr, cw), m| {
                 (
-                    i + m.tokens.input,
-                    cr + m.tokens.cache_read,
-                    cw + m.tokens.cache_write,
+                    i.saturating_add(m.tokens.input),
+                    cr.saturating_add(m.tokens.cache_read),
+                    cw.saturating_add(m.tokens.cache_write),
                 )
             });
 

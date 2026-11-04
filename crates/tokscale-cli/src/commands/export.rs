@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::tui::data::UsageData;
+use crate::tui::data::{prompt_total_u128, UsageData};
 use crate::tui::export::build_export_json;
 use crate::tui::ui::widgets::get_client_display_name;
 
@@ -25,7 +25,7 @@ fn escape_csv(val: &str) -> String {
 }
 
 fn cache_hit_pct_str(read: u64, input: u64, write: u64) -> String {
-    let total_prompt = input + read + write;
+    let total_prompt = prompt_total_u128(input, read, write);
     if total_prompt > 0 {
         format!("{:.1}%", (read as f64 / total_prompt as f64) * 100.0)
     } else {
@@ -321,7 +321,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .clients
                 .iter()
                 .map(|c| {
-                    let total_prompt = c.tokens.input + c.tokens.cache_read + c.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(c.tokens.input, c.tokens.cache_read, c.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((c.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {
@@ -355,7 +355,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .models
                 .iter()
                 .map(|m| {
-                    let total_prompt = m.tokens.input + m.tokens.cache_read + m.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(m.tokens.input, m.tokens.cache_read, m.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((m.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {
@@ -387,7 +387,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .daily
                 .iter()
                 .map(|d| {
-                    let total_prompt = d.tokens.input + d.tokens.cache_read + d.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(d.tokens.input, d.tokens.cache_read, d.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((d.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {
@@ -430,7 +430,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .hourly
                 .iter()
                 .map(|h| {
-                    let total_prompt = h.tokens.input + h.tokens.cache_read + h.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(h.tokens.input, h.tokens.cache_read, h.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((h.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {
@@ -475,7 +475,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .monthly
                 .iter()
                 .map(|m| {
-                    let total_prompt = m.tokens.input + m.tokens.cache_read + m.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(m.tokens.input, m.tokens.cache_read, m.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((m.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {
@@ -505,7 +505,7 @@ pub fn export_json(data: &UsageData, granularity: &str) -> Result<String> {
                 .sessions
                 .iter()
                 .map(|s| {
-                    let total_prompt = s.tokens.input + s.tokens.cache_read + s.tokens.cache_write;
+                    let total_prompt = prompt_total_u128(s.tokens.input, s.tokens.cache_read, s.tokens.cache_write);
                     let cache_hit_pct = if total_prompt > 0 {
                         ((s.tokens.cache_read as f64 / total_prompt as f64) * 1000.0).round() / 10.0
                     } else {

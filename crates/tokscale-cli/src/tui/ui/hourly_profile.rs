@@ -105,9 +105,9 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let (total_input, total_cache_read, total_cache_write) =
         hourly.iter().fold((0u64, 0u64, 0u64), |(i, cr, cw), h| {
             (
-                i + h.tokens.input,
-                cr + h.tokens.cache_read,
-                cw + h.tokens.cache_write,
+                i.saturating_add(h.tokens.input),
+                cr.saturating_add(h.tokens.cache_read),
+                cw.saturating_add(h.tokens.cache_write),
             )
         });
     let overall_cache_hit =

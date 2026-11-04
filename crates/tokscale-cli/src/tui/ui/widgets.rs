@@ -99,7 +99,7 @@ pub fn format_cache_hit_percent(
     cache_write: u64,
     glyphs: Glyphs,
 ) -> String {
-    let total_prompt = input.saturating_add(cache_read).saturating_add(cache_write);
+    let total_prompt = super::super::data::prompt_total_u128(input, cache_read, cache_write);
     if total_prompt == 0 {
         return glyphs.missing.to_string();
     }

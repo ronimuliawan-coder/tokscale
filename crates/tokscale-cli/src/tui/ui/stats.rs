@@ -499,9 +499,9 @@ fn render_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
             .iter()
             .fold((0u64, 0u64, 0u64), |(i, cr, cw), m| {
                 (
-                    i + m.tokens.input,
-                    cr + m.tokens.cache_read,
-                    cw + m.tokens.cache_write,
+                    i.saturating_add(m.tokens.input),
+                    cr.saturating_add(m.tokens.cache_read),
+                    cw.saturating_add(m.tokens.cache_write),
                 )
             });
     let cache_hit_str =

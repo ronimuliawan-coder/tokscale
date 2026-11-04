@@ -46,6 +46,12 @@ impl TokenBreakdown {
     }
 }
 
+/// Exact prompt-token denominator (input + cache_read + cache_write) widened to
+/// u128, so cache-hit percentages stay accurate where a u64 sum could overflow.
+pub fn prompt_total_u128(input: u64, cache_read: u64, cache_write: u64) -> u128 {
+    input as u128 + cache_read as u128 + cache_write as u128
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelUsage {
     pub model: String,
