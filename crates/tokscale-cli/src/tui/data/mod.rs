@@ -1791,7 +1791,7 @@ impl DataLoader {
                     }
                 }
 
-                if !msg.session_id.is_empty() {
+                if !is_recovery_floor && !msg.session_id.is_empty() {
                     let client_sess = client_session_ids.entry(msg.client.clone()).or_default();
                     if client_sess.insert(msg.session_id.clone()) {
                         client_entry.session_count += 1;
@@ -5130,6 +5130,8 @@ after"#,
         assert_eq!(usage.sessions.len(), 1, "the floor is not a session");
         assert_eq!(usage.agents.len(), 1, "the floor is not an agent");
         assert_eq!(usage.agents[0].agent, "Build");
+        let client_sessions: u32 = usage.clients.iter().map(|c| c.session_count).sum();
+        assert_eq!(client_sessions, 1, "the floor's synthetic id is not a client session");
         let hourly_input: u64 = usage.hourly.iter().map(|h| h.tokens.input).sum();
         assert_eq!(hourly_input, 100, "a day-level fill has no hour");
         let minutely_input: u64 = usage.minutely.iter().map(|m| m.tokens.input).sum();
