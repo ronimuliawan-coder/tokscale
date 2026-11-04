@@ -227,7 +227,7 @@ fn current_count_label(app: &App) -> String {
             // Cheap count: detail rows are one per model of the client.
             app.client_detail_name()
                 .and_then(|name| {
-                    app.data.clients.iter().find(|c| &c.client == name)
+                    app.data.clients.iter().find(|c| c.client == name)
                 })
                 .map(|client| client.models.len())
                 .unwrap_or(0),
@@ -316,7 +316,10 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("q", Style::default().fg(app.theme.muted)),
         ];
         if app.current_tab == Tab::Models {
-            spans.push(Span::styled("·", Style::default().fg(app.theme.muted)));
+            spans.push(Span::styled(
+                app.glyphs.compact_separator,
+                Style::default().fg(app.theme.muted),
+            ));
             if app.is_model_detail_active() || app.is_model_trend_active() {
                 spans.push(Span::styled("esc", hint_style));
             } else {
@@ -324,7 +327,10 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         if app.current_tab == Tab::Clients {
-            spans.push(Span::styled("·", Style::default().fg(app.theme.muted)));
+            spans.push(Span::styled(
+                app.glyphs.compact_separator,
+                Style::default().fg(app.theme.muted),
+            ));
             if app.is_client_detail_active() {
                 spans.push(Span::styled("esc", hint_style));
             } else {
