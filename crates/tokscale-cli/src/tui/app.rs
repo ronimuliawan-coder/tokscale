@@ -3515,8 +3515,8 @@ impl App {
                     .then_with(|| tie_breaker(a, b))
             }),
             (SortField::Date, SortDirection::Ascending) => clients.sort_by(|a, b| {
-                a.first_active_ms
-                    .cmp(&b.first_active_ms)
+                a.last_active_ms
+                    .cmp(&b.last_active_ms)
                     .then_with(|| tie_breaker(a, b))
             }),
         }
@@ -3575,7 +3575,7 @@ impl App {
             (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
                 a.tokens
                     .total()
-                    .cmp(&a.tokens.total())
+                    .cmp(&b.tokens.total())
                     .then_with(|| tie_breaker(a, b))
             }),
             (SortField::Date, _) => {
