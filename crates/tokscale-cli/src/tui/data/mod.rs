@@ -163,7 +163,13 @@ pub struct HourlyUsage {
     /// Clients seen, or machine labels for `GroupBy::MachineModel`.
     pub clients: BTreeSet<String>,
     pub models: BTreeMap<String, HourlyModelInfo>,
+    /// Keyed by the same source label the rows display — the client under
+    /// client grouping, the machine label under machine grouping.
     pub source_breakdown: BTreeMap<String, HourlySourceInfo>,
+    /// Client-keyed token totals, kept alongside [`HourlyUsage::source_breakdown`]
+    /// so client-level views (hourly profile peaks) stay client-keyed under
+    /// every grouping.
+    pub client_breakdown: BTreeMap<String, TokenBreakdown>,
     pub message_count: u32,
     pub turn_count: u32,
 }
@@ -1337,6 +1343,7 @@ impl DataLoader {
                     clients: BTreeSet::new(),
                     models: BTreeMap::new(),
                     source_breakdown: BTreeMap::new(),
+                    client_breakdown: BTreeMap::new(),
                     message_count: 0,
                     turn_count: 0,
                 });
@@ -1375,7 +1382,7 @@ impl DataLoader {
 
                 let source_entry = hourly_entry
                     .source_breakdown
-                    .entry(msg.client.clone())
+                    .entry(period_source.to_string())
                     .or_insert_with(|| HourlySourceInfo {
                         tokens: TokenBreakdown::default(),
                         cost: 0.0,
@@ -1383,6 +1390,28 @@ impl DataLoader {
                         turn_count: 0,
                         models: BTreeMap::new(),
                     });
+
+                // Client-keyed companion: the hourly profile's per-client peak
+                // must not depend on what the source column is keyed by.
+                let client_entry = hourly_entry
+                    .client_breakdown
+                    .entry(msg.client.clone())
+                    .or_default();
+                client_entry.input = client_entry
+                    .input
+                    .saturating_add(msg.tokens.input.max(0) as u64);
+                client_entry.output = client_entry
+                    .output
+                    .saturating_add(msg.tokens.output.max(0) as u64);
+                client_entry.cache_read = client_entry
+                    .cache_read
+                    .saturating_add(msg.tokens.cache_read.max(0) as u64);
+                client_entry.cache_write = client_entry
+                    .cache_write
+                    .saturating_add(msg.tokens.cache_write.max(0) as u64);
+                client_entry.reasoning = client_entry
+                    .reasoning
+                    .saturating_add(msg.tokens.reasoning.max(0) as u64);
 
                 source_entry.tokens.input = source_entry
                     .tokens
@@ -2431,6 +2460,7 @@ mod tests {
             models: BTreeMap::new(),
             source_breakdown: BTreeMap::new(),
             message_count: 1,
+            client_breakdown: Default::default(),
             turn_count: 1,
         };
 

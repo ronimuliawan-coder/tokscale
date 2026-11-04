@@ -1060,6 +1060,7 @@ mod tests {
             models: BTreeMap::new(),
             source_breakdown: BTreeMap::new(),
             message_count: 1,
+            client_breakdown: Default::default(),
             turn_count: 1,
         };
         app.data.hourly = vec![hour(9, 10), hour(14, 500), hour(21, 40)];

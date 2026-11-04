@@ -246,8 +246,8 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     3
                 };
-                if let Some(src) = entry.source_breakdown.get(&client.client) {
-                    period_tokens[p_idx] = period_tokens[p_idx].saturating_add(src.tokens.total());
+                if let Some(tokens) = entry.client_breakdown.get(&client.client) {
+                    period_tokens[p_idx] = period_tokens[p_idx].saturating_add(tokens.total());
                 }
             }
             let period_names = ["Morning", "Daytime", "Evening", "Night"];
@@ -512,6 +512,16 @@ mod tests {
             clients: BTreeSet::from(["opencode".to_string()]),
             models: BTreeMap::new(),
             source_breakdown: sources,
+            client_breakdown: BTreeMap::from([(
+                "opencode".to_string(),
+                TokenBreakdown {
+                    input: 100,
+                    output: 50,
+                    cache_read: 800,
+                    cache_write: 50,
+                    reasoning: 0,
+                },
+            )]),
             message_count: 5,
             turn_count: 5,
         }];

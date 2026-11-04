@@ -746,6 +746,7 @@ mod tests {
             clients: Default::default(),
             models: BTreeMap::new(),
             source_breakdown: sources,
+            client_breakdown: Default::default(),
             message_count: 5,
             turn_count: 5,
         });

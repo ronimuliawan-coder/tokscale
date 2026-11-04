@@ -262,6 +262,8 @@ struct CachedHourlyUsage {
     #[serde(default)]
     source_breakdown: Vec<(String, CachedHourlySourceInfo)>,
     #[serde(default)]
+    client_breakdown: Vec<(String, CachedTokenBreakdown)>,
+    #[serde(default)]
     message_count: u32,
     #[serde(default)]
     turn_count: u32,
@@ -572,6 +574,11 @@ impl From<&HourlyUsage> for CachedHourlyUsage {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.into()))
                 .collect(),
+            client_breakdown: h
+                .client_breakdown
+                .iter()
+                .map(|(k, v)| (k.clone(), v.into()))
+                .collect(),
             message_count: h.message_count,
             turn_count: h.turn_count,
         }
@@ -630,6 +637,11 @@ impl TryFrom<CachedHourlyUsage> for HourlyUsage {
                 })
                 .collect(),
             source_breakdown,
+            client_breakdown: h
+                .client_breakdown
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect(),
             message_count: h.message_count,
             turn_count: h.turn_count,
         })

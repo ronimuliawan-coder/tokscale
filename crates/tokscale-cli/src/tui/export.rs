@@ -213,6 +213,7 @@ mod tests {
             models: BTreeMap::new(),
             source_breakdown: BTreeMap::new(),
             message_count: 10,
+            client_breakdown: Default::default(),
             turn_count: 8,
         });
 

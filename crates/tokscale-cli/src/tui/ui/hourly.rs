@@ -665,6 +665,7 @@ mod tests {
             models: BTreeMap::new(),
             source_breakdown: BTreeMap::new(),
             message_count: 5,
+            client_breakdown: Default::default(),
             turn_count: 2,
         }
     }
@@ -963,6 +964,7 @@ mod tests {
             models: BTreeMap::new(),
             source_breakdown,
             message_count: 7,
+            client_breakdown: Default::default(),
             turn_count: 3,
         }
     }
