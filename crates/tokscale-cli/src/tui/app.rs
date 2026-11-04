@@ -2092,14 +2092,18 @@ impl App {
         self.clamp_selection();
     }
 
-    /// Clamp selection and scroll offset to valid bounds after data/resize changes.
-    /// Stats breakdown is skipped here because `render_breakdown_panel` clamps
-    /// with the actual panel height (not the full-terminal `max_visible_items`).
-    fn clamp_selection(&mut self) {
+    /// Like [`App::set_max_visible_items`] but takes the row count the caller
+    /// already computed, so clamping does not rebuild the same detail dataset
+    /// a second time per frame.
+    pub(crate) fn set_max_visible_items_with_len(&mut self, max_visible_items: usize, len: usize) {
+        self.max_visible_items = max_visible_items.max(1);
+        self.clamp_selection_with_len(len);
+    }
+
+    fn clamp_selection_with_len(&mut self, len: usize) {
         if self.current_tab == Tab::Stats && self.selected_graph_cell.is_some() {
             return;
         }
-        let len = self.get_current_list_len();
         if len == 0 {
             self.selected_index = 0;
             self.scroll_offset = 0;
@@ -2108,6 +2112,17 @@ impl App {
         self.selected_index = self.selected_index.min(len.saturating_sub(1));
         let max_scroll = len.saturating_sub(self.max_visible_items);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
+    }
+
+    /// Clamp selection and scroll offset to valid bounds after data/resize changes.
+    /// Stats breakdown is skipped here because `render_breakdown_panel` clamps
+    /// with the actual panel height (not the full-terminal `max_visible_items`).
+    fn clamp_selection(&mut self) {
+        if self.current_tab == Tab::Stats && self.selected_graph_cell.is_some() {
+            return;
+        }
+        let len = self.get_current_list_len();
+        self.clamp_selection_with_len(len);
     }
 
     pub fn clear_click_areas(&mut self) {

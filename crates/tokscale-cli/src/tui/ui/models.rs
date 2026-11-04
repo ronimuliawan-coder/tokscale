@@ -643,7 +643,7 @@ fn render_model_daily(frame: &mut Frame, app: &mut App, area: Rect, model_name: 
 
     let rows_data = app.get_model_daily_rows(model_name);
     let visible_height = inner.height.saturating_sub(2) as usize;
-    app.set_max_visible_items(visible_height);
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
     if rows_data.is_empty() {
         let empty_msg = Paragraph::new("No daily usage found for this model.")
@@ -917,7 +917,7 @@ fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name:
 
     let rows_data = app.get_model_hourly_rows(model_name);
     let visible_height = inner.height.saturating_sub(2) as usize;
-    app.set_max_visible_items(visible_height);
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
     if rows_data.is_empty() {
         let empty_msg = Paragraph::new("No hourly usage found for this model.")
@@ -1207,7 +1207,7 @@ fn render_model_clients(frame: &mut Frame, app: &mut App, area: Rect, model_name
 
     let rows_data = app.get_model_client_rows(model_name);
     let visible_height = inner.height.saturating_sub(2) as usize;
-    app.set_max_visible_items(visible_height);
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
     if rows_data.is_empty() {
         let empty_msg = Paragraph::new("No clients found for this model.")
@@ -1488,7 +1488,7 @@ fn render_model_sessions(frame: &mut Frame, app: &mut App, area: Rect, model_nam
 
     let rows_data = app.get_model_session_rows(model_name);
     let visible_height = inner.height.saturating_sub(2) as usize;
-    app.set_max_visible_items(visible_height);
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
     if rows_data.is_empty() {
         let empty_msg = Paragraph::new("No sessions found using this model.")
@@ -1781,7 +1781,7 @@ fn render_model_monthly(frame: &mut Frame, app: &mut App, area: Rect, model_name
 
     let rows_data = app.get_model_monthly_rows(model_name);
     let visible_height = inner.height.saturating_sub(2) as usize;
-    app.set_max_visible_items(visible_height);
+    app.set_max_visible_items_with_len(visible_height, rows_data.len());
 
     if rows_data.is_empty() {
         let empty_msg = Paragraph::new("No monthly usage found for this model.")
