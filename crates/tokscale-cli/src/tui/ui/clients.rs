@@ -237,7 +237,7 @@ fn render_client_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if clients_len > visible_height {
         let mut scrollbar_state =
-            viewport_scrollbar_state(clients_len, visible_height, scroll_offset);
+            viewport_scrollbar_state(clients_len, scroll_offset, visible_height);
         let scrollbar = app.glyphs.scrollbar();
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
@@ -418,7 +418,7 @@ fn render_client_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(table, inner);
 
     if rows_len > visible_height {
-        let mut scrollbar_state = viewport_scrollbar_state(rows_len, visible_height, scroll_offset);
+        let mut scrollbar_state = viewport_scrollbar_state(rows_len, scroll_offset, visible_height);
         let scrollbar = app.glyphs.scrollbar();
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
