@@ -190,7 +190,13 @@ jobs:
   coverage:
     name: Coverage Report
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: nscloud-ubuntu-24.04-amd64-4x8
+    # tarpaulin disables ASLR via the personality(ADDR_NO_RANDOMIZE) syscall,
+    # which the default container seccomp profile rejects (EPERM). The
+    # privileged-container feature lifts it. If this ever breaks again, the
+    # fallback is pinning this one job back to ubuntu-latest.
+    runs-on:
+      - nscloud-ubuntu-24.04-amd64-4x8-with-features
+      - namespace-features:container.privileged=true
     permissions:
       contents: write
 
