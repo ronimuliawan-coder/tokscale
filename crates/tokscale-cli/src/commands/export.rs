@@ -9,18 +9,21 @@ use crate::tui::ui::widgets::get_client_display_name;
 fn escape_csv(val: &str) -> String {
     // Neutralize spreadsheet formula injection: text beginning with =, +, -, @,
     // tab or CR evaluates as a formula when the CSV is opened in a spreadsheet.
-    // Prefix those values with an apostrophe; leave everything else untouched.
+    // The apostrophe must live INSIDE the quoted field — a field starting with
+    // `'` is not RFC 4180-quoted, so an embedded comma would split the row and
+    // shift the columns.
     let formula_prefix = val.starts_with(['=', '+', '-', '@', '\t', '\r']);
-    let escaped = if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r')
-    {
-        format!("\"{}\"", val.replace('"', "\"\""))
+    if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r') {
+        let inner = if formula_prefix {
+            format!("'{}", val.replace('"', "\"\""))
+        } else {
+            val.replace('"', "\"\"")
+        };
+        format!("\"{}\"", inner)
+    } else if formula_prefix {
+        format!("'{}", val)
     } else {
         val.to_string()
-    };
-    if formula_prefix {
-        format!("'{}", escaped)
-    } else {
-        escaped
     }
 }
 
@@ -847,8 +850,9 @@ mod tests {
         assert_eq!(escape_csv("+1+1"), "'+1+1");
         assert_eq!(escape_csv("@import"), "'@import");
         assert_eq!(escape_csv("-cmd"), "'-cmd");
-        // Formula character plus a delimiter: prefix outside the quoting.
-        assert_eq!(escape_csv("=cmd,1"), "'\"=cmd,1\"");
+        // Formula character plus a delimiter: the apostrophe lives inside
+        // the quotes so the field stays RFC 4180-quoted.
+        assert_eq!(escape_csv("=cmd,1"), "\"'=cmd,1\"");
         // Ordinary data is untouched (dates and timestamps never lead with a flag).
         assert_eq!(escape_csv("2026-05-29"), "2026-05-29");
         assert_eq!(escape_csv("plain title"), "plain title");
@@ -875,7 +879,7 @@ mod tests {
             subagent_count: 0,
         });
         let csv = export_csv(&data, "sessions", false).unwrap();
-        assert!(csv.contains("'\"=HYPERLINK(\"\"http://evil\"\")\""));
+        assert!(csv.contains("\"'=HYPERLINK(\"\"http://evil\"\")\""));
     }
 
     #[test]
