@@ -493,14 +493,14 @@ mod tests {
 
     fn make_msg(client: &str, session_id: &str, timestamp: i64) -> UnifiedMessage {
         UnifiedMessage {
-            client: client.to_string(),
-            model_id: "test-model".to_string(),
-            provider_id: "test-provider".to_string(),
-            session_id: session_id.to_string(),
+            client: client.to_string().into(),
+            model_id: "test-model".to_string().into(),
+            provider_id: "test-provider".to_string().into(),
+            session_id: session_id.to_string().into(),
             workspace_key: None,
             workspace_label: None,
             timestamp,
-            date: "2024-01-01".to_string(),
+            date: "2024-01-01".to_string().into(),
             tokens: TokenBreakdown {
                 input: 100,
                 output: 50,
@@ -523,6 +523,7 @@ mod tests {
             pricing_model_id: None,
             estimate_status: crate::sessions::EstimateStatus::Unpriced,
             copilot_context: None,
+            claude_entry_uuid: Default::default(),
             machine_label: None,
             duration_ms: None,
         }

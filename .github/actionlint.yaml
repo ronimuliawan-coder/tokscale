@@ -3,4 +3,8 @@
 self-hosted-runner:
   labels:
     - nscloud-ubuntu-24.04-amd64-4x8
+    - nscloud-ubuntu-24.04-amd64-4x8-with-features
     - nscloud-macos-tahoe-arm64-6x14
+    # Namespace feature flags ride the runs-on list as pseudo-labels; declare
+    # them so actionlint's runner-label check accepts them.
+    - namespace-features:container.privileged=true
