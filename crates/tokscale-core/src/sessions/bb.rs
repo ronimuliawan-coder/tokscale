@@ -693,6 +693,23 @@ pub fn scan_bb_sqlite(db_path: &Path) -> BbSqliteScan {
         } else if let Some(total) = token_container.total.as_ref().filter(|u| !u.is_zero()) {
             let current_total = total.to_breakdown(token_container.prompt_cache_ttl_ms);
             let prev_total = thread_totals.entry(thread_id.clone()).or_default();
+            // A total-only event reports a running sum. When it drops below the
+            // baseline on any field, the counter was reset, forked, or
+            // compacted: emitting the negative delta would subtract usage that
+            // was already counted, and because the baseline advances to the new
+            // total either way, that lost attribution would never come back.
+            // Treat the drop as an epoch boundary — advance the baseline and
+            // emit nothing for this event.
+            let went_backwards = current_total.input < prev_total.input
+                || current_total.output < prev_total.output
+                || current_total.cache_read < prev_total.cache_read
+                || current_total.cache_write < prev_total.cache_write
+                || current_total.cache_write_1h < prev_total.cache_write_1h
+                || current_total.reasoning < prev_total.reasoning;
+            if went_backwards {
+                *prev_total = current_total;
+                return Ok(());
+            }
             let delta = TokenBreakdown {
                 input: current_total.input.saturating_sub(prev_total.input),
                 output: current_total.output.saturating_sub(prev_total.output),

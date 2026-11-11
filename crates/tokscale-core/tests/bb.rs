@@ -223,3 +223,136 @@ async fn test_local_parse_bb_cached_and_uncached() {
         .unwrap();
     assert_eq!(uncached.len(), 2);
 }
+
+/// A total-only event whose reported sum dropped below the baseline marks a
+/// counter reset, fork, or compaction. The delta must not be emitted as a
+/// negative usage row (it would subtract already-counted usage from every
+/// aggregate); the baseline just advances so later growth is counted from the
+/// new, lower total.
+#[test]
+fn test_bb_total_regression_emits_no_negative_delta() {
+    let dir = TempDir::new().unwrap();
+    let home = dir.path();
+    let bb_dir = home.join(".bb");
+    fs::create_dir_all(&bb_dir).unwrap();
+    let db_path = bb_dir.join("bb.db");
+    let conn = create_test_bb_db(&db_path);
+
+    conn.execute(
+        "INSERT INTO projects (id, name) VALUES (?1, ?2)",
+        ("prj_bb", "my-project"),
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO project_execution_defaults (project_id, provider_id, model, service_tier) \
+         VALUES (?1, ?2, ?3, ?4)",
+        ("prj_bb", "claude-code", "claude-3-7-sonnet", "default"),
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO threads (id, project_id, provider_id, model_override, title, parent_thread_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        (
+            "thr_reset",
+            "prj_bb",
+            "claude-code",
+            None::<String>,
+            None::<String>,
+            None::<String>,
+            1_787_275_000_000_i64,
+        ),
+    )
+    .unwrap();
+
+    // Establishes the baseline via `total` and emits the per-turn `last` row.
+    let event_baseline = r#"{
+        "tokenUsage": {
+            "last": {
+                "totalTokens": 6000,
+                "inputTokens": 5000,
+                "cachedInputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "outputTokens": 1000,
+                "reasoningOutputTokens": 0
+            },
+            "total": {
+                "totalTokens": 12000,
+                "inputTokens": 10000,
+                "cachedInputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "outputTokens": 2000,
+                "reasoningOutputTokens": 0
+            }
+        }
+    }"#;
+
+    // Total drops below the baseline: counter reset. Must emit nothing.
+    let event_reset = r#"{
+        "tokenUsage": {
+            "total": {
+                "totalTokens": 5000,
+                "inputTokens": 4000,
+                "cachedInputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "outputTokens": 1000,
+                "reasoningOutputTokens": 0
+            }
+        }
+    }"#;
+
+    // Total climbs back from the reset baseline: delta from 4000, not -100.
+    let event_recover = r#"{
+        "tokenUsage": {
+            "total": {
+                "totalTokens": 10800,
+                "inputTokens": 9000,
+                "cachedInputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "outputTokens": 1800,
+                "reasoningOutputTokens": 0
+            }
+        }
+    }"#;
+
+    for (id, seq, data, ts) in [
+        ("evt_baseline", 1, event_baseline, 1_787_275_010_000_i64),
+        ("evt_reset", 2, event_reset, 1_787_275_020_000_i64),
+        ("evt_recover", 3, event_recover, 1_787_275_030_000_i64),
+    ] {
+        conn.execute(
+            "INSERT INTO events (id, thread_id, turn_id, sequence, type, data, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                id,
+                "thr_reset",
+                None::<String>,
+                seq,
+                "thread/tokenUsage/updated",
+                data,
+                ts,
+            ),
+        )
+        .unwrap();
+    }
+
+    let messages = parse_bb_sqlite(&db_path);
+    assert_eq!(messages.len(), 2, "reset event must not emit a row");
+
+    let msg1 = &messages[0];
+    assert_eq!(msg1.tokens.input, 5000);
+    assert_eq!(msg1.tokens.output, 1000);
+    assert_eq!(msg1.tokens.total(), 6000);
+
+    let msg2 = &messages[1];
+    assert_eq!(msg2.tokens.input, 5000, "delta from the reset baseline");
+    assert_eq!(msg2.tokens.output, 800);
+    assert_eq!(msg2.tokens.total(), 5800);
+
+    assert!(messages
+        .iter()
+        .all(|m| m.tokens.input >= 0 && m.tokens.output >= 0));
+}
