@@ -305,7 +305,8 @@ The interactive TUI mode provides:
 - **Keyboard Navigation**:
   - `←/→/Tab/BackTab`: Switch views
   - `↑/↓` or `Home/End`: Navigate lists
-  - `Enter`: Open daily detail (Daily tab) / per-day trend with ms/1K and Cost/1M (Models tab) / select graph cell (Stats tab)
+  - `Enter`: Open daily detail (Daily tab) / open the model detail menu (Models tab) / select graph cell (Stats tab)
+  - `v`: Per-day trend with ms/1K and Cost/1M (Models tab)
   - `Esc` or `Backspace`: Close dialog or exit detail view
   - `c/d/t`: Sort by cost/date/tokens
   - `j`: Jump to today
