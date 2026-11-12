@@ -87,6 +87,7 @@ fn header_labels(
     is_narrow: bool,
     is_very_narrow: bool,
     group_by: &GroupBy,
+    cache_hit_header: &'static str,
 ) -> Vec<&'static str> {
     if is_very_narrow {
         return vec![
@@ -132,7 +133,7 @@ fn header_labels(
         tr(lang, MessageKey::ColOutput),
         tr(lang, MessageKey::ColCacheRead),
         tr(lang, MessageKey::ColCacheWrite),
-        tr(lang, MessageKey::ColCacheHit),
+        cache_hit_header,
         tr(lang, MessageKey::ColTotal),
         tr(lang, MessageKey::ColMsPer1k),
         tr(lang, MessageKey::ColCost),
@@ -309,7 +310,13 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let header_cells = header_labels(lang, is_narrow, is_very_narrow, &group_by);
+    let header_cells = header_labels(
+        lang,
+        is_narrow,
+        is_very_narrow,
+        &group_by,
+        app.cache_hit_header(),
+    );
 
     let sort_indicator = |field: SortField| -> &'static str {
         if sort_field == field {
@@ -955,6 +962,11 @@ fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name:
     let theme_selection = app.theme.selection;
     let striped_row_style = app.theme.striped_row_style();
     let cache_hdr = app.cache_hit_header();
+    // The mid tier (80-124 cols) gives each cache metric a Length(6) column,
+    // so the full "Cache R"/"Cache W"/"Cache %" labels all truncate to the
+    // same "Cache". Use one-character labels there; the hit column still
+    // follows the % toggle.
+    let mid_tier = !is_very_narrow && !is_narrow && inner.width < 125;
 
     let header_cells = if is_very_narrow {
         vec!["Time", "Cost"]
@@ -968,9 +980,17 @@ fn render_model_hourly(frame: &mut Frame, app: &mut App, area: Rect, model_name:
             "Tokens",
             "Input",
             "Output",
-            "Cache R",
-            "Cache W",
-            cache_hdr,
+            if mid_tier { "R" } else { "Cache R" },
+            if mid_tier { "W" } else { "Cache W" },
+            if mid_tier {
+                if app.cache_display_percent {
+                    "%"
+                } else {
+                    "\u{2715}"
+                }
+            } else {
+                cache_hdr
+            },
             "Cost",
             "Cost/1M",
             "Msgs",
@@ -2481,7 +2501,7 @@ mod tests {
             assert_header_layout_fits(
                 "models/wide",
                 lang,
-                &header_labels(lang, false, false, &GroupBy::Model),
+                &header_labels(lang, false, false, &GroupBy::Model, "Cache\u{2715}"),
                 &header_widths(false, false, &GroupBy::Model, 200),
                 &WIDE_SORTABLE,
             );
@@ -2492,7 +2512,7 @@ mod tests {
                     assert_header_layout_fits(
                         &format!("models/wide-label-column(inner={inner},group={group_by:?})"),
                         lang,
-                        &header_labels(lang, false, false, &group_by),
+                        &header_labels(lang, false, false, &group_by, "Cache\u{2715}"),
                         &header_widths(false, false, &group_by, inner),
                         &WIDE_SORTABLE,
                     );
@@ -2532,7 +2552,7 @@ mod tests {
                         &format!("models(width={width},group={group_by:?})"),
                         lang,
                         &header_for(lang, width, group_by.clone()),
-                        &header_labels(lang, false, false, &group_by),
+                        &header_labels(lang, false, false, &group_by, "Cache\u{2715}"),
                     );
                 }
             }
@@ -2544,8 +2564,15 @@ mod tests {
     #[test]
     fn machine_layout_names_its_label_column_machine() {
         for lang in TuiLanguage::ALL {
-            let machine = header_labels(lang, false, false, &GroupBy::MachineModel);
-            let workspace = header_labels(lang, false, false, &GroupBy::WorkspaceModel);
+            let machine =
+                header_labels(lang, false, false, &GroupBy::MachineModel, "Cache\u{2715}");
+            let workspace = header_labels(
+                lang,
+                false,
+                false,
+                &GroupBy::WorkspaceModel,
+                "Cache\u{2715}",
+            );
             assert_eq!(machine.len(), workspace.len());
             assert_eq!(
                 machine.len(),

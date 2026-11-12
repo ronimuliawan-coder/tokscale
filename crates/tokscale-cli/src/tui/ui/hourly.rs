@@ -479,6 +479,18 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     if drop_provider {
         header_cells.remove(2);
+        // The compressed tier gives each cache metric a Length(6) column, so
+        // the full "Cache R"/"Cache W"/"Cache %" labels all truncate to the
+        // same "Cache" and become indistinguishable. Use one-character labels
+        // instead; the hit column still follows the % toggle.
+        let n = header_cells.len();
+        header_cells[n - 5] = "R";
+        header_cells[n - 4] = "W";
+        header_cells[n - 3] = if app.cache_display_percent {
+            "%"
+        } else {
+            "\u{2715}"
+        };
     };
 
     let sort_indicator = |field: SortField| -> &'static str {
