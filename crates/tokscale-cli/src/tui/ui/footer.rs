@@ -488,7 +488,10 @@ fn render_help_row(frame: &mut Frame, app: &App, area: Rect) {
             } else if app.is_model_trend_active() {
                 spans.push(Span::styled(tr(lang, MessageKey::HelpBack), hint_style));
             } else {
-                spans.push(Span::styled(tr(lang, MessageKey::HelpDetails), hint_style));
+                spans.push(Span::styled(
+                    tr(lang, MessageKey::HelpModelMenu),
+                    hint_style,
+                ));
             }
             spans.push(Span::styled(
                 separator,

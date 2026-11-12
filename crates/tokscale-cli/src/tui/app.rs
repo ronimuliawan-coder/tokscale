@@ -1381,10 +1381,10 @@ impl App {
                 self.set_status(&format!("Cache display: {}", mode));
             }
             KeyCode::Enter if self.current_tab == Tab::Models => {
-                if self.is_model_detail_menu_active() {
+                if !self.is_model_detail_active() {
+                    self.open_selected_model_detail_menu();
+                } else if self.is_model_detail_menu_active() {
                     self.select_model_detail_view();
-                } else if !self.is_model_detail_active() {
-                    self.open_selected_model_trend();
                 }
             }
             KeyCode::Char('i') | KeyCode::Char('I') | KeyCode::Char('o') | KeyCode::Char('O')
@@ -1393,6 +1393,11 @@ impl App {
                 if !self.is_model_detail_active() {
                     self.open_selected_model_detail_menu();
                 }
+            }
+            KeyCode::Char('v')
+                if self.current_tab == Tab::Models && !self.is_model_detail_active() =>
+            {
+                self.open_selected_model_trend();
             }
             KeyCode::Enter
                 if self.current_tab == Tab::Clients && !self.is_client_detail_active() =>
@@ -5910,12 +5915,17 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_on_models_opens_trend_newest_first_and_esc_restores_list() {
+    fn test_enter_on_models_opens_the_detail_menu_and_v_opens_the_trend() {
         let mut app = models_app();
         app.selected_index = 1; // "target" under cost-descending
 
         app.handle_key_event(key(KeyCode::Enter));
+        assert!(app.is_model_detail_menu_active());
+        assert_eq!(app.model_detail.as_ref().unwrap().model_name, "target");
+        app.handle_key_event(key(KeyCode::Esc));
+        assert!(!app.is_model_detail_active());
 
+        app.handle_key_event(key(KeyCode::Char('v')));
         assert!(app.is_model_trend_active());
         assert_eq!(app.model_trend_model().unwrap().model, "target");
         let dates: Vec<String> = app
@@ -5939,7 +5949,7 @@ mod tests {
     fn test_sorting_inside_trend_does_not_change_models_sort() {
         let mut app = models_app();
         app.selected_index = 1;
-        app.handle_key_event(key(KeyCode::Enter));
+        app.handle_key_event(key(KeyCode::Char('v')));
         app.handle_key_event(key(KeyCode::Char('t')));
         assert_eq!(app.sort_field, SortField::Tokens);
 
@@ -5954,7 +5964,7 @@ mod tests {
     fn test_update_data_exits_trend_when_its_model_disappears() {
         let mut app = models_app();
         app.selected_index = 1;
-        app.handle_key_event(key(KeyCode::Enter));
+        app.handle_key_event(key(KeyCode::Char('v')));
         assert!(app.is_model_trend_active());
 
         app.update_data(UsageData {
@@ -5967,16 +5977,20 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_does_not_open_a_trend_for_rows_painted_from_cache() {
+    fn test_v_does_not_open_a_trend_for_rows_painted_from_cache() {
         // Cache hits rebuild rows without a daily series; a cache from before
         // `groupKey` also gives every row the same empty key. Neither may open
-        // a trend until the background refresh delivers real rows.
+        // a trend until the background refresh delivers real rows. The detail
+        // menu may open either way - it is just a picker.
         let mut cached = models_app();
         for model in &mut cached.data.models {
             model.daily.clear();
         }
         cached.selected_index = 1;
         cached.handle_key_event(key(KeyCode::Enter));
+        assert!(cached.is_model_detail_menu_active());
+        cached.handle_key_event(key(KeyCode::Esc));
+        cached.handle_key_event(key(KeyCode::Char('v')));
         assert!(!cached.is_model_trend_active());
         assert_eq!(cached.sort_field, SortField::Cost);
 
@@ -5985,7 +5999,7 @@ mod tests {
             model.group_key.clear();
         }
         legacy.selected_index = 1;
-        legacy.handle_key_event(key(KeyCode::Enter));
+        legacy.handle_key_event(key(KeyCode::Char('v')));
         assert!(!legacy.is_model_trend_active());
     }
 
@@ -5993,7 +6007,7 @@ mod tests {
     fn test_reset_selection_inside_a_trend_restores_the_models_list_sort() {
         let mut app = models_app();
         app.selected_index = 1;
-        app.handle_key_event(key(KeyCode::Enter));
+        app.handle_key_event(key(KeyCode::Char('v')));
         assert_eq!(app.sort_field, SortField::Date);
 
         app.reset_selection();
@@ -6010,7 +6024,7 @@ mod tests {
         let list_sort = (app.sort_field, app.sort_direction);
         assert_eq!(list_sort.0, SortField::Tokens);
         app.selected_index = 1;
-        app.handle_key_event(key(KeyCode::Enter));
+        app.handle_key_event(key(KeyCode::Char('v')));
         assert!(app.is_model_trend_active());
 
         app.switch_tab(Tab::Daily);
