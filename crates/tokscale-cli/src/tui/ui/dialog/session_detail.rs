@@ -321,7 +321,7 @@ impl SessionDetailDialog {
 
         lines.push(kv_line(
             if self.cache_percent {
-                "Cache %"
+                tr(self.lang, MessageKey::ColCacheHitPercent)
             } else {
                 tr(self.lang, MessageKey::ColCacheHit)
             },

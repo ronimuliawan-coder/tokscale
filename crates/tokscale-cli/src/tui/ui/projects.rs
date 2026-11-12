@@ -129,7 +129,7 @@ impl ProjectColumn {
             Self::CacheWrite => tr(lang, MessageKey::ColCacheWrite),
             Self::CacheHit => {
                 if cache_percent {
-                    "Cache %"
+                    tr(lang, MessageKey::ColCacheHitPercent)
                 } else {
                     tr(lang, MessageKey::ColCacheHit)
                 }
@@ -903,15 +903,19 @@ mod tests {
     #[test]
     fn header_labels_fit_their_budget_in_every_language() {
         for lang in TuiLanguage::ALL {
-            for column in ALL {
-                assert_header_fits(
-                    "projects/wide",
-                    &format!("{column:?}"),
-                    lang,
-                    column.header(lang, false),
-                    column.natural(),
-                    column.sort_field().is_some(),
-                );
+            // Both cache modes: the % toggle swaps the hit column between two
+            // localized labels and both must fit the same budget.
+            for cache_percent in [false, true] {
+                for column in ALL {
+                    assert_header_fits(
+                        "projects/wide",
+                        &format!("{column:?}"),
+                        lang,
+                        column.header(lang, cache_percent),
+                        column.natural(),
+                        column.sort_field().is_some(),
+                    );
+                }
             }
         }
     }

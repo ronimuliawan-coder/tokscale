@@ -2498,24 +2498,31 @@ mod tests {
     #[test]
     fn no_header_overflows_its_budget_in_any_language() {
         for lang in TuiLanguage::ALL {
-            assert_header_layout_fits(
-                "models/wide",
-                lang,
-                &header_labels(lang, false, false, &GroupBy::Model, "Cache\u{2715}"),
-                &header_widths(false, false, &GroupBy::Model, 200),
-                &WIDE_SORTABLE,
-            );
-            // Below and above the surplus threshold, i.e. Workspace at 18 cells
-            // and at 44.
-            for inner in [WORKSPACE_SURPLUS_MIN_WIDTH - 1, WORKSPACE_SURPLUS_MIN_WIDTH] {
-                for group_by in [GroupBy::WorkspaceModel, GroupBy::MachineModel] {
-                    assert_header_layout_fits(
-                        &format!("models/wide-label-column(inner={inner},group={group_by:?})"),
-                        lang,
-                        &header_labels(lang, false, false, &group_by, "Cache\u{2715}"),
-                        &header_widths(false, false, &group_by, inner),
-                        &WIDE_SORTABLE,
-                    );
+            // Both cache modes: the toggle swaps the hit column between two
+            // localized labels and both must fit the same budgets. The label
+            // layouts (workspace/machine grouping) carry no hit column, so a
+            // shared label list stands in for them there.
+            for cache_hdr in [
+                tr(lang, MessageKey::ColCacheHit),
+                tr(lang, MessageKey::ColCacheHitPercent),
+            ] {
+                assert_header_layout_fits(
+                    "models/wide",
+                    lang,
+                    &header_labels(lang, false, false, &GroupBy::Model, cache_hdr),
+                    &header_widths(false, false, &GroupBy::Model, 200),
+                    &WIDE_SORTABLE,
+                );
+                for inner in [WORKSPACE_SURPLUS_MIN_WIDTH - 1, WORKSPACE_SURPLUS_MIN_WIDTH] {
+                    for group_by in [GroupBy::WorkspaceModel, GroupBy::MachineModel] {
+                        assert_header_layout_fits(
+                            &format!("models/wide-label-column(inner={inner},group={group_by:?})"),
+                            lang,
+                            &header_labels(lang, false, false, &group_by, cache_hdr),
+                            &header_widths(false, false, &group_by, inner),
+                            &WIDE_SORTABLE,
+                        );
+                    }
                 }
             }
         }
@@ -2552,7 +2559,13 @@ mod tests {
                         &format!("models(width={width},group={group_by:?})"),
                         lang,
                         &header_for(lang, width, group_by.clone()),
-                        &header_labels(lang, false, false, &group_by, "Cache\u{2715}"),
+                        &header_labels(
+                            lang,
+                            false,
+                            false,
+                            &group_by,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }
@@ -2564,14 +2577,19 @@ mod tests {
     #[test]
     fn machine_layout_names_its_label_column_machine() {
         for lang in TuiLanguage::ALL {
-            let machine =
-                header_labels(lang, false, false, &GroupBy::MachineModel, "Cache\u{2715}");
+            let machine = header_labels(
+                lang,
+                false,
+                false,
+                &GroupBy::MachineModel,
+                tr(lang, MessageKey::ColCacheHit),
+            );
             let workspace = header_labels(
                 lang,
                 false,
                 false,
                 &GroupBy::WorkspaceModel,
-                "Cache\u{2715}",
+                tr(lang, MessageKey::ColCacheHit),
             );
             assert_eq!(machine.len(), workspace.len());
             assert_eq!(

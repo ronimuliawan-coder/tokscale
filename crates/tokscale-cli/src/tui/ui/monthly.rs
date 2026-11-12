@@ -816,24 +816,33 @@ mod tests {
     #[test]
     fn no_header_overflows_its_budget_in_any_language() {
         for lang in TuiLanguage::ALL {
-            for has_turn in [true, false] {
-                // Both first-column widths, since `compact_full_date` narrows
-                // Month/Date to 7 when the full layout does not fit.
-                for col_width in [7u16, 12] {
-                    assert_header_layout_fits(
-                        &format!("monthly/wide(turn={has_turn},month={col_width})"),
-                        lang,
-                        &header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
-                        &header_widths(col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
-                    );
-                    assert_header_layout_fits(
-                        &format!("monthly-detail/wide(turn={has_turn},date={col_width})"),
-                        lang,
-                        &detail_header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
-                        &detail_header_widths(col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
-                    );
+            // Both cache modes: the toggle swaps the hit column between two
+            // localized labels and both must fit the same budgets.
+            for cache_hdr in [
+                tr(lang, MessageKey::ColCacheHit),
+                tr(lang, MessageKey::ColCacheHitPercent),
+            ] {
+                for has_turn in [true, false] {
+                    // Both first-column widths, since `compact_full_date` narrows
+                    // Month/Date to 7 when the full layout does not fit.
+                    for col_width in [7u16, 12] {
+                        assert_header_layout_fits(
+                            &format!(
+                                "monthly/wide(turn={has_turn},month={col_width},hdr={cache_hdr})"
+                            ),
+                            lang,
+                            &header_labels(lang, false, false, has_turn, cache_hdr),
+                            &header_widths(col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                        assert_header_layout_fits(
+                            &format!("monthly-detail/wide(turn={has_turn},date={col_width},hdr={cache_hdr})"),
+                            lang,
+                            &detail_header_labels(lang, false, false, has_turn, cache_hdr),
+                            &detail_header_widths(col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                    }
                 }
             }
         }
@@ -856,7 +865,13 @@ mod tests {
                         &format!("monthly(width={width},turn={has_turn})"),
                         lang,
                         &header_for(lang, width, has_turn),
-                        &header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
+                        &header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }
@@ -876,7 +891,13 @@ mod tests {
                         &format!("monthly-detail(width={width},turn={has_turn})"),
                         lang,
                         &detail_header_for(lang, width, has_turn),
-                        &detail_header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
+                        &detail_header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }

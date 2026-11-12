@@ -897,41 +897,52 @@ mod tests {
     #[test]
     fn no_header_overflows_its_budget_in_any_language() {
         for lang in TuiLanguage::ALL {
-            for has_turn in [true, false] {
-                // Both date-column widths, since `compact_full_date` narrows it
-                // to 7 when the full layout does not fit.
-                for date_col_width in [7u16, 12] {
+            // Both cache modes: the toggle swaps the hit column between two
+            // localized labels and both must fit the same budgets.
+            for cache_hdr in [
+                tr(lang, MessageKey::ColCacheHit),
+                tr(lang, MessageKey::ColCacheHitPercent),
+            ] {
+                for has_turn in [true, false] {
+                    // Both date-column widths, since `compact_full_date` narrows
+                    // it to 7 when the full layout does not fit.
+                    for date_col_width in [7u16, 12] {
+                        assert_header_layout_fits(
+                            &format!(
+                                "daily/wide(turn={has_turn},date={date_col_width},hdr={cache_hdr})"
+                            ),
+                            lang,
+                            &header_labels(lang, false, false, has_turn, cache_hdr),
+                            &header_widths(date_col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                    }
+                }
+                for group_by in &DETAIL_GROUPINGS {
                     assert_header_layout_fits(
-                        &format!("daily/wide(turn={has_turn},date={date_col_width})"),
+                        &format!("daily-detail/wide(group={group_by:?},hdr={cache_hdr})"),
                         lang,
-                        &header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
-                        &header_widths(date_col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
+                        &detail_header_labels(lang, group_by, false, false, true, cache_hdr),
+                        &detail_header_widths(false, false, true),
+                        // Total and Cost carry the arrows in the detail table.
+                        &[
+                            false, false, false, false, false, false, false, false, false, false,
+                            true, false, true, false,
+                        ],
+                    );
+                    assert_header_layout_fits(
+                        &format!(
+                            "daily-detail/wide-without-speed(group={group_by:?},hdr={cache_hdr})"
+                        ),
+                        lang,
+                        &detail_header_labels(lang, group_by, false, false, false, cache_hdr),
+                        &detail_header_widths(false, false, false),
+                        &[
+                            false, false, false, false, false, false, false, false, false, false,
+                            true, true,
+                        ],
                     );
                 }
-            }
-            for group_by in &DETAIL_GROUPINGS {
-                assert_header_layout_fits(
-                    &format!("daily-detail/wide(group={group_by:?})"),
-                    lang,
-                    &detail_header_labels(lang, group_by, false, false, true, "Cache\u{2715}"),
-                    &detail_header_widths(false, false, true),
-                    // Total and Cost carry the arrows in the detail table.
-                    &[
-                        false, false, false, false, false, false, false, false, false, false, true,
-                        false, true, false,
-                    ],
-                );
-                assert_header_layout_fits(
-                    &format!("daily-detail/wide-without-speed(group={group_by:?})"),
-                    lang,
-                    &detail_header_labels(lang, group_by, false, false, false, "Cache\u{2715}"),
-                    &detail_header_widths(false, false, false),
-                    &[
-                        false, false, false, false, false, false, false, false, false, false, true,
-                        true,
-                    ],
-                );
             }
         }
     }
@@ -968,7 +979,13 @@ mod tests {
                         &format!("daily(width={width},turn={has_turn})"),
                         lang,
                         &header_for(lang, width, has_turn),
-                        &header_labels(lang, false, false, has_turn, "Cache\u{2715}"),
+                        &header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }
@@ -1016,7 +1033,7 @@ mod tests {
                             false,
                             false,
                             with_speed,
-                            "Cache\u{2715}",
+                            tr(lang, MessageKey::ColCacheHit),
                         ),
                     );
                 }

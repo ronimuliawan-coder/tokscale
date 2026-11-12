@@ -173,7 +173,7 @@ impl SessionColumn {
             Self::CacheWrite => tr(lang, MessageKey::ColCacheWrite),
             Self::CacheHit => {
                 if cache_percent {
-                    "Cache %"
+                    tr(lang, MessageKey::ColCacheHitPercent)
                 } else {
                     tr(lang, MessageKey::ColCacheHit)
                 }
@@ -1455,14 +1455,16 @@ mod tests {
                     if !column.available(&ctx) {
                         continue;
                     }
-                    assert_header_fits(
-                        &format!("sessions/wide(turn={has_turn})"),
-                        &format!("{column:?}"),
-                        lang,
-                        column.header(lang, false),
-                        column.natural(&ctx),
-                        column.sort_field().is_some(),
-                    );
+                    for cache_percent in [false, true] {
+                        assert_header_fits(
+                            &format!("sessions/wide(turn={has_turn})"),
+                            &format!("{column:?}"),
+                            lang,
+                            column.header(lang, cache_percent),
+                            column.natural(&ctx),
+                            column.sort_field().is_some(),
+                        );
+                    }
                 }
             }
         }

@@ -111,6 +111,7 @@ pub enum MessageKey {
     ColOutput,
     ColCacheRead,
     ColCacheWrite,
+    ColCacheHitPercent,
     ColSession,
     ColProject,
     ColDuration,
@@ -718,6 +719,7 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::StatusSubagentRollupOff => "Subagent sessions shown separately",
 
         MessageKey::ColCacheHit => "Cache✕",
+        MessageKey::ColCacheHitPercent => "Cache %",
 
         MessageKey::TitleDailyUsage => " Daily Usage ",
         MessageKey::TitleMonthlyUsage => " Monthly Usage ",
@@ -1161,6 +1163,7 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "서브에이전트 세션을 개별 표시",
 
         MessageKey::ColCacheHit => "캐시✕",
+        MessageKey::ColCacheHitPercent => "캐시 %",
 
         MessageKey::TitleDailyUsage => " 일별 사용량 ",
         MessageKey::TitleMonthlyUsage => " 월별 사용량 ",
@@ -1611,6 +1614,7 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "サブエージェントセッションを個別表示",
 
         MessageKey::ColCacheHit => "Hit率",
+        MessageKey::ColCacheHitPercent => "Hit率 %",
 
         MessageKey::TitleDailyUsage => " 日別使用量 ",
         MessageKey::TitleMonthlyUsage => " 月別使用量 ",
@@ -2052,6 +2056,7 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "子代理会话单独显示",
 
         MessageKey::ColCacheHit => "缓存✕",
+        MessageKey::ColCacheHitPercent => "缓存 %",
 
         MessageKey::TitleDailyUsage => " 每日用量 ",
         MessageKey::TitleMonthlyUsage => " 每月用量 ",
@@ -2485,6 +2490,7 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "Sessions de sous-agents affichées séparément",
 
         MessageKey::ColCacheHit => "Cache✕",
+        MessageKey::ColCacheHitPercent => "Cache %",
 
         MessageKey::TitleDailyUsage => " Utilisation quotidienne ",
         MessageKey::TitleMonthlyUsage => " Utilisation mensuelle ",

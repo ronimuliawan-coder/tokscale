@@ -3626,9 +3626,9 @@ impl App {
 
     pub fn cache_hit_header(&self) -> &'static str {
         if self.cache_display_percent {
-            "Cache %"
+            tr(self.settings.tui_language, MessageKey::ColCacheHitPercent)
         } else {
-            "Cache✕"
+            tr(self.settings.tui_language, MessageKey::ColCacheHit)
         }
     }
 
