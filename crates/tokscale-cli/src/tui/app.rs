@@ -1381,7 +1381,7 @@ impl App {
                 self.set_status(&format!("Cache display: {}", mode));
             }
             KeyCode::Enter if self.current_tab == Tab::Models => {
-                if !self.is_model_detail_active() {
+                if !self.is_model_detail_active() && !self.is_model_trend_active() {
                     self.open_selected_model_detail_menu();
                 } else if self.is_model_detail_menu_active() {
                     self.select_model_detail_view();
@@ -3810,7 +3810,13 @@ impl App {
     }
 
     pub(crate) fn open_selected_model_detail_menu(&mut self) {
-        if self.current_tab != Tab::Models || self.is_model_detail_active() {
+        // A trend renders instead of the menu and keeps its own date-row
+        // selection index; opening the menu from it would build an invisible
+        // menu keyed on that index and intercept the trend's navigation keys.
+        if self.current_tab != Tab::Models
+            || self.is_model_detail_active()
+            || self.is_model_trend_active()
+        {
             return;
         }
 
@@ -6002,6 +6008,33 @@ mod tests {
         legacy.selected_index = 1;
         legacy.handle_key_event(key(KeyCode::Char('v')));
         assert!(!legacy.is_model_trend_active());
+    }
+
+    #[test]
+    fn test_enter_and_menu_keys_do_not_open_a_hidden_menu_inside_a_trend() {
+        // A trend renders instead of the model detail menu and keeps its own
+        // date-row selection. Enter and the menu keys must not build the
+        // invisible menu from the trend's row index while the trend is open.
+        let mut app = models_app();
+        app.selected_index = 1;
+        app.handle_key_event(key(KeyCode::Char('v')));
+        assert!(app.is_model_trend_active());
+
+        app.handle_key_event(key(KeyCode::Enter));
+        assert!(!app.is_model_detail_active());
+        assert!(app.is_model_trend_active());
+
+        app.handle_key_event(key(KeyCode::Char('i')));
+        assert!(!app.is_model_detail_active());
+        assert!(app.is_model_trend_active());
+
+        app.handle_key_event(key(KeyCode::Up));
+        assert!(!app.is_model_detail_active());
+        assert!(app.is_model_trend_active());
+
+        app.handle_key_event(key(KeyCode::Esc));
+        assert!(!app.is_model_trend_active());
+        assert!(!app.is_model_detail_active());
     }
 
     #[test]
