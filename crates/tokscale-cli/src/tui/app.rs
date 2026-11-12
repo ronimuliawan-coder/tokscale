@@ -2869,7 +2869,8 @@ impl App {
         };
 
         if let Some(session) = selected_session {
-            let dialog = SessionDetailDialog::new(session, self.settings.tui_language);
+            let mut dialog = SessionDetailDialog::new(session, self.settings.tui_language);
+            dialog.cache_percent = self.cache_display_percent;
             self.dialog_stack.show(Box::new(dialog));
         }
     }

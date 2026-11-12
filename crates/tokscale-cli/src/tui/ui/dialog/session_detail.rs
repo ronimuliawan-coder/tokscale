@@ -15,7 +15,7 @@ use crate::tui::data::SessionUsage;
 use crate::tui::i18n::{tr, tr_with_glyphs, MessageKey, TuiLanguage};
 use crate::tui::themes::Theme;
 use crate::tui::ui::widgets::{
-    format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens_with_commas,
+    format_cache_hit, format_cost, format_cost_per_million, format_tokens_with_commas,
     get_client_display_name, viewport_scrollbar_state,
 };
 use crate::ui_glyphs::Glyphs;
@@ -26,6 +26,9 @@ use super::{DialogContent, DialogResult};
 pub struct SessionDetailDialog {
     session: SessionUsage,
     lang: TuiLanguage,
+    /// Mirrors the app's cache-display toggle so the cache line renders in the
+    /// same mode (percentage or reuse multiplier) as the tables behind it.
+    pub cache_percent: bool,
     scroll_offset: Cell<usize>,
     total_lines: Cell<usize>,
     visible_height: Cell<usize>,
@@ -36,6 +39,7 @@ impl SessionDetailDialog {
         Self {
             session,
             lang,
+            cache_percent: false,
             scroll_offset: Cell::new(0),
             total_lines: Cell::new(0),
             visible_height: Cell::new(0),
@@ -316,12 +320,17 @@ impl SessionDetailDialog {
         ));
 
         lines.push(kv_line(
-            tr(self.lang, MessageKey::ColCacheHit),
+            if self.cache_percent {
+                "Cache %"
+            } else {
+                tr(self.lang, MessageKey::ColCacheHit)
+            },
             Span::styled(
-                format_cache_hit_rate(
+                format_cache_hit(
                     self.session.tokens.cache_read,
                     self.session.tokens.input,
                     self.session.tokens.cache_write,
+                    self.cache_percent,
                     glyphs,
                 ),
                 theme.count_style(),
