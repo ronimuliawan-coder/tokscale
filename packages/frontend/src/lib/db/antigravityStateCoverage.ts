@@ -194,7 +194,7 @@ export function validateAntigravityRecountProof(
         !sameCoverage(modelToCoverage(model), corr) ||
         !Number.isFinite(model.cost) ||
         model.cost < 0 ||
-        model.cost - entry.corrected.cost > PROOF_COST_TOLERANCE
+        Math.abs(model.cost - entry.corrected.cost) > PROOF_COST_TOLERANCE
       ) {
         return undefined;
       }
@@ -270,7 +270,15 @@ function adjustCellWithRecountProof(
       for (const field of COVERAGE_FIELDS) {
         removedDelta[field] += prevCov[field] - corrCov[field];
       }
-      removedCost += Math.max(0, entry.previous.cost - entry.corrected.cost);
+      // The entry matched on token coverage, which says nothing about its
+      // cost side: credit the reduction only when the claimed previous cost
+      // equals the cost the ledger actually stored for this model.
+      const previousCostVerified =
+        Number.isFinite(model.cost) &&
+        Math.abs(entry.previous.cost - model.cost) <= PROOF_COST_TOLERANCE;
+      removedCost += previousCostVerified
+        ? Math.max(0, entry.previous.cost - entry.corrected.cost)
+        : 0;
       if (sameCoverage(corrCov, emptyCoverage()) && entry.corrected.cost === 0) {
         continue;
       }
@@ -310,18 +318,21 @@ function sumProofTotals(proof: ClientRecountProof): {
   previous: Coverage;
   corrected: Coverage;
   removedCost: number;
+  previousCost: number;
 } {
   const previous = emptyCoverage();
   const corrected = emptyCoverage();
   let removedCost = 0;
+  let previousCost = 0;
   for (const models of Object.values(proof)) {
     for (const entry of Object.values(models)) {
       addCoverage(previous, usageToCoverage(entry.previous));
       addCoverage(corrected, usageToCoverage(entry.corrected));
       removedCost += Math.max(0, entry.previous.cost - entry.corrected.cost);
+      previousCost += entry.previous.cost;
     }
   }
-  return { previous, corrected, removedCost };
+  return { previous, corrected, removedCost, previousCost };
 }
 
 type LegacyLedger = {
@@ -527,10 +538,18 @@ export function antigravityPriorCoverage(
         (sum, c) => sum + (c?.cost ?? 0),
         0,
       );
-      const allowedCostReduction = Math.min(
-        proofTotals.removedCost,
-        rawClientStoredCost,
-      );
+      // Coverage equality alone does not certify the proof's cost side: the
+      // submitter also writes `previous.cost`, and an inflated claim here
+      // would let `removedCost` authorize erasing the entire stored client
+      // cost (the reduction is clamped by stored cost, so overclaiming
+      // reaches the clamp). Credit a reduction only when the claimed
+      // previous cost matches what the ledger actually holds.
+      const previousCostVerified =
+        Math.abs(proofTotals.previousCost - rawClientStoredCost) <=
+        PROOF_COST_TOLERANCE;
+      const allowedCostReduction = previousCostVerified
+        ? Math.min(proofTotals.removedCost, rawClientStoredCost)
+        : 0;
       recountCostReduction += allowedCostReduction;
       const firstIdx = rawClientCells.findIndex((c) => c !== undefined);
       if (firstIdx !== -1) {

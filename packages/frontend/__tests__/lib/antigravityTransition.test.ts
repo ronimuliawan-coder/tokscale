@@ -872,4 +872,65 @@ describe("planAntigravityTransition generation boundary", () => {
     expect(plan.mode).toBe("freeze");
     expect(plan.parserVersions).toEqual(pins(PREVIOUS));
   });
+
+  // A proof's previous side matches the stored cells on token coverage, but
+  // the submitter also writes `previous.cost`. An inflated claim used to let
+  // `removedCost` authorize erasing the whole stored cost floor, so a
+  // reduction is credited only when the claimed previous cost matches the
+  // stored ledger. Both authorization sites are covered: the whole-client
+  // path (proof totals) and the per-cell path (proof covers a subset of the
+  // stored days).
+  it("credits no cost reduction when the proof inflates the previous cost", () => {
+    const inflated: Count = { ...previousCount, cost: 999 };
+    const plan = planAntigravityTransition({
+      ...baseArgs(),
+      persistedVersions: pins(PREVIOUS),
+      recountProofs: {
+        "antigravity-cli": {
+          [DATE]: { [MODEL]: { previous: inflated, corrected: correctedCount } },
+        },
+      },
+      contributions: snapshot(correctedCount),
+      existingDays: stored(previousCount),
+    });
+    expect(plan.mode).toBe("replace");
+    // The plan omits the field entirely when no reduction is credited.
+    expect(plan.recountCostReduction ?? 0).toBe(0);
+  });
+
+  it("credits no cost reduction from an inflated claim on the per-cell path", () => {
+    // A phantom extra day pushes the proof's previous total off the stored
+    // coverage, so the whole-client shortcut does not apply and each stored
+    // cell is matched (and cost-verified) individually.
+    const inflated: Count = { ...previousCount, cost: 999 };
+    const plan = planAntigravityTransition({
+      ...baseArgs(),
+      persistedVersions: pins(PREVIOUS),
+      recountProofs: {
+        "antigravity-cli": {
+          [DATE]: { [MODEL]: { previous: inflated, corrected: correctedCount } },
+          "2026-08-11": {
+            [MODEL]: {
+              previous: {
+                tokens: {
+                  input: 700,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  reasoning: 0,
+                },
+                cost: 5,
+                messages: 1,
+              },
+              corrected: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }, cost: 0, messages: 0 },
+            },
+          },
+        },
+      },
+      contributions: snapshot(correctedCount),
+      existingDays: stored(previousCount),
+    });
+    expect(plan.mode).toBe("replace");
+    expect(plan.recountCostReduction ?? 0).toBe(0);
+  });
 });
