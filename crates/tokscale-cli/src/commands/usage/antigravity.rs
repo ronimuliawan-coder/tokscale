@@ -593,7 +593,31 @@ fn sync_active_session_file(token: &str, address: &str) {
         return;
     };
     if !dir.is_dir() {
-        return;
+        // First use: quota discovery can succeed from an active environment
+        // before any lifecycle hook has created the session directory. Create
+        // it private rather than dropping a successful session save.
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[cfg(unix)]
+    {
+        // A secret-bearing file must not land in a directory other accounts
+        // can write into: another local user could pre-plant a predictably
+        // named replacement or read the persisted token. Skip persistence
+        // instead - discovery still works from the environment this run.
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(dir)
+            .map(|meta| meta.permissions().mode() & 0o022 != 0)
+            .unwrap_or(true)
+        {
+            return;
+        }
     }
     let content = format!("ANTIGRAVITY_CSRF_TOKEN={token}\nANTIGRAVITY_LS_ADDRESS={address}\n");
     if let Ok(existing) = std::fs::read_to_string(&target) {
@@ -601,7 +625,9 @@ fn sync_active_session_file(token: &str, address: &str) {
             return;
         }
     }
-    let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
+    // An unpredictable name plus exclusive creation closes the race where a
+    // pre-planted path redirects the secret-bearing write elsewhere.
+    let tmp = target.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
     let write_res = (|| -> std::io::Result<()> {
         #[cfg(unix)]
         {
@@ -609,7 +635,7 @@ fn sync_active_session_file(token: &str, address: &str) {
             use std::os::unix::fs::OpenOptionsExt;
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
-                .create(true)
+                .create_new(true)
                 .truncate(true)
                 .mode(0o600)
                 .open(&tmp)?;
@@ -618,7 +644,12 @@ fn sync_active_session_file(token: &str, address: &str) {
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(&tmp, &content)?;
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(content.as_bytes())?;
         }
         tokscale_core::fs_atomic::replace_file(&tmp, &target)?;
         Ok(())
@@ -1418,6 +1449,70 @@ mod tests {
     /// delay already spends a fifth of it before anything else happens. The
     /// diagnostics on the assertion exist so a failure says which of the two
     /// was hit.
+    #[test]
+    #[serial]
+    fn sync_creates_a_private_session_directory_on_first_use() {
+        // Quota discovery succeeded before any lifecycle hook ran: the session
+        // directory does not exist yet. The save must create it (private) and
+        // persist the session instead of dropping it.
+        let tmp = TempDir::new().unwrap();
+        let session_file = tmp.path().join("gemini/antigravity-cli/active_session.env");
+        let mut env = EnvGuard::capture(&HOME_ENV_KEYS);
+        env.set("ANTIGRAVITY_SESSION_FILE", &session_file);
+
+        assert!(!session_file.exists());
+        sync_active_session_file("first-token", "http://127.0.0.1:9999");
+
+        let content = std::fs::read_to_string(&session_file)
+            .expect("the session file must be written on first use");
+        assert!(content.contains("ANTIGRAVITY_CSRF_TOKEN=first-token"));
+        assert!(content.contains("ANTIGRAVITY_LS_ADDRESS=http://127.0.0.1:9999"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir_mode = std::fs::metadata(session_file.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                dir_mode, 0o700,
+                "the created session directory must be private"
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(session_file.parent().unwrap())
+                .unwrap()
+                .count(),
+            1,
+            "no temp leftovers beside the persisted session"
+        );
+        drop(env);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn sync_refuses_to_persist_a_session_into_a_group_writable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("shared");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let session_file = dir.join("active_session.env");
+        let mut env = EnvGuard::capture(&HOME_ENV_KEYS);
+        env.set("ANTIGRAVITY_SESSION_FILE", &session_file);
+
+        sync_active_session_file("secret-token", "http://127.0.0.1:9999");
+
+        assert!(
+            !session_file.exists(),
+            "a secret-bearing session file must not be written into a \
+             directory other accounts can write into"
+        );
+        drop(env);
+    }
+
     #[test]
     #[serial]
     fn a_language_server_slower_than_the_old_probe_budget_still_reports() {
