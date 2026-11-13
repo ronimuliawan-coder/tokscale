@@ -765,7 +765,7 @@ fn parse_sqlite_archive(
     digest: &str,
     session_id: &str,
     fallback_timestamp: i64,
-) -> std::io::Result<Vec<UnifiedMessage>> {
+) -> std::io::Result<(Vec<UnifiedMessage>, bool)> {
     if payload.len() as u64 > MAX_ARCHIVE_BYTES
         || !format!("{:x}", Sha256::digest(payload)).eq_ignore_ascii_case(digest)
     {
@@ -795,9 +795,24 @@ fn parse_sqlite_archive(
     };
     let mut state = OpenClawSessionState::default();
     let mut messages = Vec::new();
-    // Stream JSON values, not physical lines: archives may retain multiline records.
-    for entry in serde_json::Deserializer::from_reader(&mut reader).into_iter::<OpenClawEntry>() {
-        let entry = entry.map_err(std::io::Error::other)?;
+    // Stream JSON values, not physical lines: archives may retain multiline
+    // records. Each streamed value converts to an entry independently, so one
+    // malformed record skips itself - the same tolerance the live-row path has -
+    // instead of discarding every usage event in the archive. Stream-level
+    // failures (truncated or undecodable payloads) still fail the archive, and
+    // any conversion failure keeps the store out of the cache so a future
+    // parser can re-derive the skipped rows.
+    let mut had_conversion_failures = false;
+    for value in serde_json::Deserializer::from_reader(&mut reader).into_iter::<serde_json::Value>()
+    {
+        let value = value.map_err(std::io::Error::other)?;
+        let entry = match serde_json::from_value::<OpenClawEntry>(value) {
+            Ok(entry) => entry,
+            Err(_) => {
+                had_conversion_failures = true;
+                continue;
+            }
+        };
         if let Some(message) = ingest_openclaw_entry(entry, &mut state, &ctx) {
             messages.push(message);
         }
@@ -807,7 +822,7 @@ fn parse_sqlite_archive(
             "decoded transcript exceeds archive limit",
         ));
     }
-    Ok(messages)
+    Ok((messages, had_conversion_failures))
 }
 
 fn scan_sqlite_archives(
@@ -852,7 +867,13 @@ fn scan_sqlite_archives(
                 })
             })();
             match parsed {
-                Ok(archive_messages) => messages.extend(archive_messages),
+                Ok((archive_messages, had_conversion_failures)) => {
+                    messages.extend(archive_messages);
+                    // Skipped records keep the archive uncacheable: the rows
+                    // they dropped are re-derivable once a parser change can
+                    // read them, which caching the undercount would prevent.
+                    payload_failed = payload_failed || had_conversion_failures;
+                }
                 Err(error) => {
                     payload_failed = true;
                     return Err(error);
@@ -1181,6 +1202,38 @@ mod tests {
             .messages
             .iter()
             .all(|message| message.tokens.input == 5));
+    }
+
+    #[test]
+    fn sqlite_archive_skips_a_malformed_record_but_stays_uncacheable() {
+        use test_fixtures::*;
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("openclaw-agent.sqlite");
+        let conn = create_agent_db(&path);
+        let model = r#"{"type":"model_change","provider":"openai","modelId":"gpt-4.1"}"#;
+        let good1 = r#"{"type":"message","id":"e1","message":{"role":"assistant","usage":{"input":7,"output":2},"timestamp":1756548001000}}"#;
+        // Valid JSON, wrong shape: `message` must be an object, so the record
+        // converts to no entry at all (the live-row path skips it the same way).
+        let malformed =
+            r#"{"type":"message","id":"e2","message":"corrupted","timestamp":1756548002000}"#;
+        let good2 = r#"{"type":"message","id":"e3","message":{"role":"assistant","usage":{"input":9,"output":1},"timestamp":1756548003000}}"#;
+        let archive = format!(
+            "{}\n{model}\n{good1}\n{malformed}\n{good2}\n",
+            header_event("arc")
+        );
+        insert_archive(&conn, "arc", "plain", &archive, false);
+        conn.execute_batch("DROP TABLE transcript_events;").unwrap();
+
+        let scan = scan_openclaw_sqlite(&path);
+        // Both well-formed records are still counted - one malformed record
+        // must not discard the whole archived session.
+        assert_eq!(scan.messages.len(), 2);
+        assert_eq!(scan.messages[0].tokens.input, 7);
+        assert_eq!(scan.messages[1].tokens.input, 9);
+        // The skipped rows are re-derivable once a parser change can read
+        // them, so the store stays out of the cache instead of baking the
+        // undercount in.
+        assert!(!scan.complete);
     }
 
     #[test]
