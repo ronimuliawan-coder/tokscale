@@ -111,6 +111,7 @@ pub enum MessageKey {
     ColOutput,
     ColCacheRead,
     ColCacheWrite,
+    ColCacheHitPercent,
     ColSession,
     ColProject,
     ColDuration,
@@ -166,6 +167,7 @@ pub enum MessageKey {
     HelpSort,
     HelpBack,
     HelpDetails,
+    HelpModelMenu,
     HelpToday,
     HelpProfile,
     HelpSources,
@@ -654,6 +656,7 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::HelpSort => "[d/t/c:sort]",
         MessageKey::HelpBack => "[esc:back]",
         MessageKey::HelpDetails => "[enter:details]",
+        MessageKey::HelpModelMenu => "[enter:menu] · [v:trend]",
         MessageKey::HelpToday => "[j:today]",
         MessageKey::HelpProfile => "[v:profile]",
         MessageKey::HelpSources => "[s:sources]",
@@ -716,6 +719,7 @@ const fn tr_en(key: MessageKey) -> &'static str {
         MessageKey::StatusSubagentRollupOff => "Subagent sessions shown separately",
 
         MessageKey::ColCacheHit => "Cache✕",
+        MessageKey::ColCacheHitPercent => "Cache %",
 
         MessageKey::TitleDailyUsage => " Daily Usage ",
         MessageKey::TitleMonthlyUsage => " Monthly Usage ",
@@ -1098,6 +1102,7 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::HelpSort => "[d/t/c:정렬]",
         MessageKey::HelpBack => "[esc:뒤로]",
         MessageKey::HelpDetails => "[enter:상세]",
+        MessageKey::HelpModelMenu => "[enter:메뉴] · [v:추이]",
         MessageKey::HelpToday => "[j:오늘]",
         MessageKey::HelpProfile => "[v:프로필]",
         MessageKey::HelpSources => "[s:소스]",
@@ -1158,6 +1163,7 @@ const fn tr_ko(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "서브에이전트 세션을 개별 표시",
 
         MessageKey::ColCacheHit => "캐시✕",
+        MessageKey::ColCacheHitPercent => "캐시 %",
 
         MessageKey::TitleDailyUsage => " 일별 사용량 ",
         MessageKey::TitleMonthlyUsage => " 월별 사용량 ",
@@ -1547,6 +1553,7 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::HelpSort => "[d/t/c:並替]",
         MessageKey::HelpBack => "[esc:戻る]",
         MessageKey::HelpDetails => "[enter:詳細]",
+        MessageKey::HelpModelMenu => "[enter:メニュー] · [v:トレンド]",
         MessageKey::HelpToday => "[j:今日]",
         MessageKey::HelpProfile => "[v:プロファイル]",
         MessageKey::HelpSources => "[s:ソース]",
@@ -1607,6 +1614,7 @@ const fn tr_ja(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "サブエージェントセッションを個別表示",
 
         MessageKey::ColCacheHit => "Hit率",
+        MessageKey::ColCacheHitPercent => "Hit率 %",
 
         MessageKey::TitleDailyUsage => " 日別使用量 ",
         MessageKey::TitleMonthlyUsage => " 月別使用量 ",
@@ -1987,6 +1995,7 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::HelpSort => "[d/t/c:排序]",
         MessageKey::HelpBack => "[esc:返回]",
         MessageKey::HelpDetails => "[enter:详情]",
+        MessageKey::HelpModelMenu => "[enter:菜单] · [v:趋势]",
         MessageKey::HelpToday => "[j:今日]",
         MessageKey::HelpProfile => "[v:分析图]",
         MessageKey::HelpSources => "[s:来源]",
@@ -2047,6 +2056,7 @@ const fn tr_zh_cn(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "子代理会话单独显示",
 
         MessageKey::ColCacheHit => "缓存✕",
+        MessageKey::ColCacheHitPercent => "缓存 %",
 
         MessageKey::TitleDailyUsage => " 每日用量 ",
         MessageKey::TitleMonthlyUsage => " 每月用量 ",
@@ -2419,6 +2429,7 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::HelpSort => "[d/t/c:tri]",
         MessageKey::HelpBack => "[esc:retour]",
         MessageKey::HelpDetails => "[enter:détails]",
+        MessageKey::HelpModelMenu => "[enter:menu] · [v:tendance]",
         MessageKey::HelpToday => "[j:aujourd'hui]",
         MessageKey::HelpProfile => "[v:profil]",
         MessageKey::HelpSources => "[s:sources]",
@@ -2479,6 +2490,7 @@ const fn tr_fr(key: MessageKey) -> Option<&'static str> {
         MessageKey::StatusSubagentRollupOff => "Sessions de sous-agents affichées séparément",
 
         MessageKey::ColCacheHit => "Cache✕",
+        MessageKey::ColCacheHitPercent => "Cache %",
 
         MessageKey::TitleDailyUsage => " Utilisation quotidienne ",
         MessageKey::TitleMonthlyUsage => " Utilisation mensuelle ",

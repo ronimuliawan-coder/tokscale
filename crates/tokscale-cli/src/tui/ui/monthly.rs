@@ -2,7 +2,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::widgets::{
-    format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens, total_tokens_cell,
+    format_cost, format_cost_per_million, format_tokens, total_tokens_cell,
     viewport_scrollbar_state,
 };
 use crate::tui::app::{App, SortDirection, SortField};
@@ -20,6 +20,7 @@ fn header_labels(
     is_narrow: bool,
     is_very_narrow: bool,
     has_turn_data: bool,
+    cache_hit_header: &'static str,
 ) -> Vec<&'static str> {
     if is_very_narrow {
         return vec![
@@ -55,7 +56,7 @@ fn header_labels(
         tr(lang, MessageKey::ColOutput),
         tr(lang, MessageKey::ColCacheRead),
         tr(lang, MessageKey::ColCacheWrite),
-        tr(lang, MessageKey::ColCacheHit),
+        cache_hit_header,
         tr(lang, MessageKey::ColTotal),
         tr(lang, MessageKey::ColCost),
         tr(lang, MessageKey::ColCostPer1M),
@@ -123,6 +124,7 @@ fn detail_header_labels(
     is_narrow: bool,
     is_very_narrow: bool,
     has_turn_data: bool,
+    cache_hit_header: &'static str,
 ) -> Vec<&'static str> {
     if is_very_narrow {
         return vec![tr(lang, MessageKey::ColDate), tr(lang, MessageKey::ColCost)];
@@ -155,7 +157,7 @@ fn detail_header_labels(
         tr(lang, MessageKey::ColOutput),
         tr(lang, MessageKey::ColCacheRead),
         tr(lang, MessageKey::ColCacheWrite),
-        tr(lang, MessageKey::ColCacheHit),
+        cache_hit_header,
         tr(lang, MessageKey::ColTotal),
         tr(lang, MessageKey::ColCost),
         tr(lang, MessageKey::ColCostPer1M),
@@ -230,7 +232,13 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let month_col_width: u16 = if compact_full_date { 7 } else { 12 };
 
     let lang = app.settings.tui_language;
-    let header_cells = header_labels(lang, is_narrow, is_very_narrow, has_turn_data);
+    let header_cells = header_labels(
+        lang,
+        is_narrow,
+        is_very_narrow,
+        has_turn_data,
+        app.cache_hit_header(),
+    );
 
     let sort_indicator = |field: SortField| -> &'static str {
         if sort_field == field {
@@ -327,11 +335,10 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                         .style(metric_cache_read_style),
                     Cell::from(format_tokens(month.tokens.cache_write))
                         .style(metric_cache_write_style),
-                    Cell::from(format_cache_hit_rate(
+                    Cell::from(app.format_cache(
                         month.tokens.cache_read,
                         month.tokens.input,
                         month.tokens.cache_write,
-                        app.glyphs,
                     ))
                     .style(app.theme.count_style()),
                     total_tokens_cell(month.tokens.total(), &app.theme),
@@ -450,7 +457,13 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let lang = app.settings.tui_language;
-    let header_cells = detail_header_labels(lang, is_narrow, is_very_narrow, has_turn_data);
+    let header_cells = detail_header_labels(
+        lang,
+        is_narrow,
+        is_very_narrow,
+        has_turn_data,
+        app.cache_hit_header(),
+    );
 
     let sort_indicator = |field: SortField| -> &'static str {
         if sort_field == field {
@@ -546,11 +559,10 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format_tokens(day.tokens.cache_read)).style(metric_cache_read_style),
                     Cell::from(format_tokens(day.tokens.cache_write))
                         .style(metric_cache_write_style),
-                    Cell::from(format_cache_hit_rate(
+                    Cell::from(app.format_cache(
                         day.tokens.cache_read,
                         day.tokens.input,
                         day.tokens.cache_write,
-                        app.glyphs,
                     ))
                     .style(app.theme.count_style()),
                     total_tokens_cell(day.tokens.total(), &app.theme),
@@ -804,24 +816,33 @@ mod tests {
     #[test]
     fn no_header_overflows_its_budget_in_any_language() {
         for lang in TuiLanguage::ALL {
-            for has_turn in [true, false] {
-                // Both first-column widths, since `compact_full_date` narrows
-                // Month/Date to 7 when the full layout does not fit.
-                for col_width in [7u16, 12] {
-                    assert_header_layout_fits(
-                        &format!("monthly/wide(turn={has_turn},month={col_width})"),
-                        lang,
-                        &header_labels(lang, false, false, has_turn),
-                        &header_widths(col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
-                    );
-                    assert_header_layout_fits(
-                        &format!("monthly-detail/wide(turn={has_turn},date={col_width})"),
-                        lang,
-                        &detail_header_labels(lang, false, false, has_turn),
-                        &detail_header_widths(col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
-                    );
+            // Both cache modes: the toggle swaps the hit column between two
+            // localized labels and both must fit the same budgets.
+            for cache_hdr in [
+                tr(lang, MessageKey::ColCacheHit),
+                tr(lang, MessageKey::ColCacheHitPercent),
+            ] {
+                for has_turn in [true, false] {
+                    // Both first-column widths, since `compact_full_date` narrows
+                    // Month/Date to 7 when the full layout does not fit.
+                    for col_width in [7u16, 12] {
+                        assert_header_layout_fits(
+                            &format!(
+                                "monthly/wide(turn={has_turn},month={col_width},hdr={cache_hdr})"
+                            ),
+                            lang,
+                            &header_labels(lang, false, false, has_turn, cache_hdr),
+                            &header_widths(col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                        assert_header_layout_fits(
+                            &format!("monthly-detail/wide(turn={has_turn},date={col_width},hdr={cache_hdr})"),
+                            lang,
+                            &detail_header_labels(lang, false, false, has_turn, cache_hdr),
+                            &detail_header_widths(col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                    }
                 }
             }
         }
@@ -844,7 +865,13 @@ mod tests {
                         &format!("monthly(width={width},turn={has_turn})"),
                         lang,
                         &header_for(lang, width, has_turn),
-                        &header_labels(lang, false, false, has_turn),
+                        &header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }
@@ -864,7 +891,13 @@ mod tests {
                         &format!("monthly-detail(width={width},turn={has_turn})"),
                         lang,
                         &detail_header_for(lang, width, has_turn),
-                        &detail_header_labels(lang, false, false, has_turn),
+                        &detail_header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }

@@ -3,9 +3,9 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::widgets::{
-    display_width, fit_workspace_label_to_width_with_marker, format_cache_hit_rate, format_cost,
-    format_tokens, get_compact_client_display_name, prefix_to_width, truncate_text,
-    truncate_to_width, viewport_scrollbar_state,
+    display_width, fit_workspace_label_to_width_with_marker, format_cost, format_tokens,
+    get_compact_client_display_name, prefix_to_width, truncate_text, truncate_to_width,
+    viewport_scrollbar_state,
 };
 use crate::tui::app::{App, SortDirection, SortField};
 use crate::tui::data::{ProjectUsage, SessionModel};
@@ -116,7 +116,7 @@ struct WideLayout {
 }
 
 impl ProjectColumn {
-    fn header(self, lang: TuiLanguage) -> &'static str {
+    fn header(self, lang: TuiLanguage, cache_percent: bool) -> &'static str {
         match self {
             Self::Rank => tr(lang, MessageKey::ColRank),
             Self::Project => tr(lang, MessageKey::ColProject),
@@ -127,7 +127,13 @@ impl ProjectColumn {
             Self::Output => tr(lang, MessageKey::ColOutput),
             Self::CacheRead => tr(lang, MessageKey::ColCacheRead),
             Self::CacheWrite => tr(lang, MessageKey::ColCacheWrite),
-            Self::CacheHit => tr(lang, MessageKey::ColCacheHit),
+            Self::CacheHit => {
+                if cache_percent {
+                    tr(lang, MessageKey::ColCacheHitPercent)
+                } else {
+                    tr(lang, MessageKey::ColCacheHit)
+                }
+            }
             Self::Total => tr(lang, MessageKey::ColTotal),
             Self::Cost => tr(lang, MessageKey::ColCost),
             Self::LastActive => tr(lang, MessageKey::ColLastActive),
@@ -215,11 +221,10 @@ impl ProjectColumn {
                 .style(app.theme.metric_cache_read_style()),
             Self::CacheWrite => Cell::from(self.fit(format_tokens(p.tokens.cache_write)))
                 .style(app.theme.metric_cache_write_style()),
-            Self::CacheHit => Cell::from(self.fit(format_cache_hit_rate(
+            Self::CacheHit => Cell::from(self.fit(app.format_cache(
                 p.tokens.cache_read,
                 p.tokens.input,
                 p.tokens.cache_write,
-                app.glyphs,
             )))
             .style(app.theme.count_style()),
             Self::Total => Cell::from(self.fit(format_tokens(p.tokens.total())))
@@ -368,7 +373,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|c| {
                 let indicator = c.sort_field().map(sort_indicator).unwrap_or("");
-                format!("{}{}", c.header(lang), indicator)
+                format!("{}{}", c.header(lang, app.cache_display_percent), indicator)
             })
             .collect()
     } else {
@@ -771,7 +776,7 @@ mod tests {
                     continue;
                 }
                 assert!(
-                    !header.contains(column.header(TuiLanguage::En)),
+                    !header.contains(column.header(TuiLanguage::En, false)),
                     "{column:?} header showed at width {width}\n{header}"
                 );
             }
@@ -787,10 +792,10 @@ mod tests {
         let header = header_line(&mut app, 200);
         for c in WIDE_ORDER {
             assert!(
-                header.contains(c.header(TuiLanguage::En)),
+                header.contains(c.header(TuiLanguage::En, false)),
                 "wide header is missing {:?} ({:?})",
                 c,
-                c.header(TuiLanguage::En)
+                c.header(TuiLanguage::En, false)
             );
         }
     }
@@ -818,7 +823,10 @@ mod tests {
         let header = body.lines().nth(1).unwrap();
         let row = body.lines().nth(2).unwrap();
         for column in WIDE_ORDER {
-            assert!(header.contains(column.header(TuiLanguage::En)), "{header}");
+            assert!(
+                header.contains(column.header(TuiLanguage::En, false)),
+                "{header}"
+            );
         }
         let last_active = ms_to_local_naive(last_ms)
             .unwrap()
@@ -870,7 +878,7 @@ mod tests {
                 let header = header_line(&mut app, width);
                 if admit_and_distribute(width - 2).chosen.contains(&column) {
                     assert!(
-                        header.contains(&format!("{} ▾", column.header(TuiLanguage::En))),
+                        header.contains(&format!("{} ▾", column.header(TuiLanguage::En, false))),
                         "{field:?} ▾ clipped at width {width}\n{header}"
                     );
                 } else {
@@ -895,15 +903,19 @@ mod tests {
     #[test]
     fn header_labels_fit_their_budget_in_every_language() {
         for lang in TuiLanguage::ALL {
-            for column in ALL {
-                assert_header_fits(
-                    "projects/wide",
-                    &format!("{column:?}"),
-                    lang,
-                    column.header(lang),
-                    column.natural(),
-                    column.sort_field().is_some(),
-                );
+            // Both cache modes: the % toggle swaps the hit column between two
+            // localized labels and both must fit the same budget.
+            for cache_percent in [false, true] {
+                for column in ALL {
+                    assert_header_fits(
+                        "projects/wide",
+                        &format!("{column:?}"),
+                        lang,
+                        column.header(lang, cache_percent),
+                        column.natural(),
+                        column.sort_field().is_some(),
+                    );
+                }
             }
         }
     }
@@ -928,7 +940,10 @@ mod tests {
                             tr(lang, MessageKey::ColCost),
                         ]
                     } else {
-                        chosen.iter().map(|c| c.header(lang)).collect()
+                        chosen
+                            .iter()
+                            .map(|c| c.header(lang, app.cache_display_percent))
+                            .collect()
                     }
                 } else {
                     vec![

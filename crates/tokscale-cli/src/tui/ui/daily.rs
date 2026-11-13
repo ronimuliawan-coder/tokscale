@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use tokscale_core::GroupBy;
 
 use super::widgets::{
-    format_cache_hit_rate, format_cost, format_cost_per_million, format_ms_per_1k, format_tokens,
+    format_cost, format_cost_per_million, format_ms_per_1k, format_tokens,
     get_provider_display_name, period_source_display_name, period_source_header, total_tokens_cell,
     truncate_text, viewport_scrollbar_state,
 };
@@ -24,6 +24,7 @@ fn header_labels(
     is_narrow: bool,
     is_very_narrow: bool,
     has_turn_data: bool,
+    cache_hit_header: &'static str,
 ) -> Vec<&'static str> {
     if is_very_narrow {
         return vec![tr(lang, MessageKey::ColDate), tr(lang, MessageKey::ColCost)];
@@ -46,7 +47,7 @@ fn header_labels(
         tr(lang, MessageKey::ColOutput),
         tr(lang, MessageKey::ColCacheRead),
         tr(lang, MessageKey::ColCacheWrite),
-        tr(lang, MessageKey::ColCacheHit),
+        cache_hit_header,
         tr(lang, MessageKey::ColTotal),
         tr(lang, MessageKey::ColCost),
         tr(lang, MessageKey::ColCostPer1M),
@@ -115,6 +116,7 @@ fn detail_header_labels(
     is_narrow: bool,
     is_very_narrow: bool,
     with_speed: bool,
+    cache_hit_header: &'static str,
 ) -> Vec<&'static str> {
     if is_very_narrow {
         return vec![
@@ -141,7 +143,7 @@ fn detail_header_labels(
         tr(lang, MessageKey::ColOutput),
         tr(lang, MessageKey::ColCacheRead),
         tr(lang, MessageKey::ColCacheWrite),
-        tr(lang, MessageKey::ColCacheHit),
+        cache_hit_header,
         tr(lang, MessageKey::ColTotal),
     ];
     if with_speed {
@@ -229,7 +231,13 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let lang = app.settings.tui_language;
-    let header_cells = header_labels(lang, is_narrow, is_very_narrow, has_turn_data);
+    let header_cells = header_labels(
+        lang,
+        is_narrow,
+        is_very_narrow,
+        has_turn_data,
+        app.cache_hit_header(),
+    );
 
     let sort_indicator = |field: SortField| -> &'static str {
         if sort_field == field {
@@ -344,11 +352,10 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format_tokens(day.tokens.cache_read)).style(metric_cache_read_style),
                     Cell::from(format_tokens(day.tokens.cache_write))
                         .style(metric_cache_write_style),
-                    Cell::from(format_cache_hit_rate(
+                    Cell::from(app.format_cache(
                         day.tokens.cache_read,
                         day.tokens.input,
                         day.tokens.cache_write,
-                        app.glyphs,
                     ))
                     .style(app.theme.count_style()),
                     total_tokens_cell(day.tokens.total(), &app.theme),
@@ -494,7 +501,14 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let with_speed = !is_narrow && inner.width.saturating_add(2) >= DETAIL_SPEED_COLUMNS_MIN_WIDTH;
     let group_by = app.group_by.borrow().clone();
-    let header_cells = detail_header_labels(lang, &group_by, is_narrow, is_very_narrow, with_speed);
+    let header_cells = detail_header_labels(
+        lang,
+        &group_by,
+        is_narrow,
+        is_very_narrow,
+        with_speed,
+        app.cache_hit_header(),
+    );
     let cost_column = if with_speed { 12 } else { 11 };
 
     let sort_indicator = |field: SortField| -> &'static str {
@@ -588,11 +602,10 @@ fn render_detail(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(format_tokens(row.tokens.cache_read)).style(metric_cache_read_style),
                     Cell::from(format_tokens(row.tokens.cache_write))
                         .style(metric_cache_write_style),
-                    Cell::from(format_cache_hit_rate(
+                    Cell::from(app.format_cache(
                         row.tokens.cache_read,
                         row.tokens.input,
                         row.tokens.cache_write,
-                        app.glyphs,
                     ))
                     .style(app.theme.count_style()),
                     total_tokens_cell(row.tokens.total(), &app.theme),
@@ -884,41 +897,52 @@ mod tests {
     #[test]
     fn no_header_overflows_its_budget_in_any_language() {
         for lang in TuiLanguage::ALL {
-            for has_turn in [true, false] {
-                // Both date-column widths, since `compact_full_date` narrows it
-                // to 7 when the full layout does not fit.
-                for date_col_width in [7u16, 12] {
+            // Both cache modes: the toggle swaps the hit column between two
+            // localized labels and both must fit the same budgets.
+            for cache_hdr in [
+                tr(lang, MessageKey::ColCacheHit),
+                tr(lang, MessageKey::ColCacheHitPercent),
+            ] {
+                for has_turn in [true, false] {
+                    // Both date-column widths, since `compact_full_date` narrows
+                    // it to 7 when the full layout does not fit.
+                    for date_col_width in [7u16, 12] {
+                        assert_header_layout_fits(
+                            &format!(
+                                "daily/wide(turn={has_turn},date={date_col_width},hdr={cache_hdr})"
+                            ),
+                            lang,
+                            &header_labels(lang, false, false, has_turn, cache_hdr),
+                            &header_widths(date_col_width, false, false, has_turn),
+                            &sortable_flags(has_turn),
+                        );
+                    }
+                }
+                for group_by in &DETAIL_GROUPINGS {
                     assert_header_layout_fits(
-                        &format!("daily/wide(turn={has_turn},date={date_col_width})"),
+                        &format!("daily-detail/wide(group={group_by:?},hdr={cache_hdr})"),
                         lang,
-                        &header_labels(lang, false, false, has_turn),
-                        &header_widths(date_col_width, false, false, has_turn),
-                        &sortable_flags(has_turn),
+                        &detail_header_labels(lang, group_by, false, false, true, cache_hdr),
+                        &detail_header_widths(false, false, true),
+                        // Total and Cost carry the arrows in the detail table.
+                        &[
+                            false, false, false, false, false, false, false, false, false, false,
+                            true, false, true, false,
+                        ],
+                    );
+                    assert_header_layout_fits(
+                        &format!(
+                            "daily-detail/wide-without-speed(group={group_by:?},hdr={cache_hdr})"
+                        ),
+                        lang,
+                        &detail_header_labels(lang, group_by, false, false, false, cache_hdr),
+                        &detail_header_widths(false, false, false),
+                        &[
+                            false, false, false, false, false, false, false, false, false, false,
+                            true, true,
+                        ],
                     );
                 }
-            }
-            for group_by in &DETAIL_GROUPINGS {
-                assert_header_layout_fits(
-                    &format!("daily-detail/wide(group={group_by:?})"),
-                    lang,
-                    &detail_header_labels(lang, group_by, false, false, true),
-                    &detail_header_widths(false, false, true),
-                    // Total and Cost carry the arrows in the detail table.
-                    &[
-                        false, false, false, false, false, false, false, false, false, false, true,
-                        false, true, false,
-                    ],
-                );
-                assert_header_layout_fits(
-                    &format!("daily-detail/wide-without-speed(group={group_by:?})"),
-                    lang,
-                    &detail_header_labels(lang, group_by, false, false, false),
-                    &detail_header_widths(false, false, false),
-                    &[
-                        false, false, false, false, false, false, false, false, false, false, true,
-                        true,
-                    ],
-                );
             }
         }
     }
@@ -955,7 +979,13 @@ mod tests {
                         &format!("daily(width={width},turn={has_turn})"),
                         lang,
                         &header_for(lang, width, has_turn),
-                        &header_labels(lang, false, false, has_turn),
+                        &header_labels(
+                            lang,
+                            false,
+                            false,
+                            has_turn,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }
@@ -997,7 +1027,14 @@ mod tests {
                         &format!("daily-detail(width={width},group={group_by:?})"),
                         lang,
                         &detail_header_for(lang, group_by, width),
-                        &detail_header_labels(lang, group_by, false, false, with_speed),
+                        &detail_header_labels(
+                            lang,
+                            group_by,
+                            false,
+                            false,
+                            with_speed,
+                            tr(lang, MessageKey::ColCacheHit),
+                        ),
                     );
                 }
             }

@@ -155,7 +155,7 @@ struct WideLayout {
 }
 
 impl SessionColumn {
-    fn header(self, lang: TuiLanguage) -> &'static str {
+    fn header(self, lang: TuiLanguage, cache_percent: bool) -> &'static str {
         match self {
             Self::Session => tr(lang, MessageKey::ColSession),
             Self::Client => tr(lang, MessageKey::ColClient),
@@ -171,7 +171,13 @@ impl SessionColumn {
             Self::Output => tr(lang, MessageKey::ColOutput),
             Self::CacheRead => tr(lang, MessageKey::ColCacheRead),
             Self::CacheWrite => tr(lang, MessageKey::ColCacheWrite),
-            Self::CacheHit => tr(lang, MessageKey::ColCacheHit),
+            Self::CacheHit => {
+                if cache_percent {
+                    tr(lang, MessageKey::ColCacheHitPercent)
+                } else {
+                    tr(lang, MessageKey::ColCacheHit)
+                }
+            }
             Self::Total => tr(lang, MessageKey::ColTotal),
             Self::Cost => tr(lang, MessageKey::ColCost),
             Self::CostPerMillion => tr(lang, MessageKey::ColCostPer1M),
@@ -676,7 +682,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|c| {
                 let indicator = c.sort_field().map(sort_indicator).unwrap_or("");
-                format!("{}{}", c.header(lang), indicator)
+                format!("{}{}", c.header(lang, app.cache_display_percent), indicator)
             })
             .collect()
     } else {
@@ -1019,8 +1025,10 @@ mod tests {
     /// substring of `Cost/1M`, so the longer label is stripped before looking for
     /// the shorter one; no other pair of labels overlaps.
     fn header_columns(header: &str) -> Vec<SessionColumn> {
-        let without_cost_per_million =
-            header.replace(SessionColumn::CostPerMillion.header(TuiLanguage::En), "");
+        let without_cost_per_million = header.replace(
+            SessionColumn::CostPerMillion.header(TuiLanguage::En, false),
+            "",
+        );
         ALL.iter()
             .copied()
             .filter(|c| {
@@ -1029,7 +1037,7 @@ mod tests {
                 } else {
                     header
                 };
-                haystack.contains(c.header(TuiLanguage::En))
+                haystack.contains(c.header(TuiLanguage::En, false))
             })
             .collect()
     }
@@ -1268,7 +1276,7 @@ mod tests {
                     let header = header_line(&mut app, width);
                     for column in *group {
                         assert_eq!(
-                            header.contains(column.header(TuiLanguage::En)),
+                            header.contains(column.header(TuiLanguage::En, false)),
                             want,
                             "{:?} at width {width} (turn={has_turn}) should be {}\n{header}",
                             column,
@@ -1371,7 +1379,7 @@ mod tests {
                 let row = lines.next().unwrap_or_default();
                 for column in expected_columns(width, has_turn) {
                     assert!(
-                        header.contains(column.header(TuiLanguage::En)),
+                        header.contains(column.header(TuiLanguage::En, false)),
                         "header {:?} squeezed at width {width} (turn={has_turn})\n{header}",
                         column
                     );
@@ -1412,7 +1420,7 @@ mod tests {
                         continue;
                     }
                     assert!(
-                        !header.contains(column.header(TuiLanguage::En)),
+                        !header.contains(column.header(TuiLanguage::En, false)),
                         "{:?} header showed at width {width} (turn={has_turn})\n{header}",
                         column
                     );
@@ -1447,14 +1455,16 @@ mod tests {
                     if !column.available(&ctx) {
                         continue;
                     }
-                    assert_header_fits(
-                        &format!("sessions/wide(turn={has_turn})"),
-                        &format!("{column:?}"),
-                        lang,
-                        column.header(lang),
-                        column.natural(&ctx),
-                        column.sort_field().is_some(),
-                    );
+                    for cache_percent in [false, true] {
+                        assert_header_fits(
+                            &format!("sessions/wide(turn={has_turn})"),
+                            &format!("{column:?}"),
+                            lang,
+                            column.header(lang, cache_percent),
+                            column.natural(&ctx),
+                            column.sort_field().is_some(),
+                        );
+                    }
                 }
             }
         }
@@ -1508,7 +1518,11 @@ mod tests {
                                 .iter()
                                 .map(|c| {
                                     let indicator = c.sort_field().map(arrow).unwrap_or("");
-                                    format!("{}{}", c.header(lang), indicator)
+                                    format!(
+                                        "{}{}",
+                                        c.header(lang, app.cache_display_percent),
+                                        indicator
+                                    )
                                 })
                                 .collect()
                         } else {
@@ -1564,7 +1578,7 @@ mod tests {
                             assert!(
                                 header.contains(&format!(
                                     "{} {arrow}",
-                                    column.header(TuiLanguage::En)
+                                    column.header(TuiLanguage::En, false)
                                 )),
                                 "{:?} {arrow} clipped at width {width} (turn={has_turn})\n{header}",
                                 field
