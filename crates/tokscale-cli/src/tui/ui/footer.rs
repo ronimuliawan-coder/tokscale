@@ -214,14 +214,12 @@ fn render_main_row(frame: &mut Frame, app: &mut App, area: Rect) {
 fn current_count_label(app: &App) -> String {
     let lang = app.settings.tui_language;
     match app.current_tab {
-        Tab::Models if app.is_model_trend_active() => format_count(
-            lang,
-            app.get_sorted_model_trend_rows().len(),
-            MessageKey::CountDays,
-        ),
+        Tab::Models if app.is_model_trend_active() => {
+            format_count(lang, app.model_trend_rows_len(), MessageKey::CountDays)
+        }
         Tab::Models if app.is_model_detail_view_active() => format_count(
             lang,
-            app.get_sorted_model_detail_rows_count(),
+            app.get_model_detail_rows_count(),
             MessageKey::CountModels,
         ),
         Tab::Overview | Tab::Models => {
@@ -238,24 +236,18 @@ fn current_count_label(app: &App) -> String {
         ),
         Tab::Clients => format_count(lang, app.data.clients.len(), MessageKey::CountClients),
         Tab::Agents => format_count(lang, app.data.agents.len(), MessageKey::CountAgents),
-        Tab::Daily if app.is_daily_detail_active() => format_count(
-            lang,
-            app.get_sorted_daily_detail_rows().len(),
-            MessageKey::CountModels,
-        ),
+        Tab::Daily if app.is_daily_detail_active() => {
+            format_count(lang, app.daily_detail_rows_len(), MessageKey::CountModels)
+        }
         Tab::Daily => format_count(lang, app.data.daily.len(), MessageKey::CountDays),
-        Tab::Hourly if app.is_hourly_detail_active() => format_count(
-            lang,
-            app.get_sorted_hourly_detail_rows().len(),
-            MessageKey::CountModels,
-        ),
+        Tab::Hourly if app.is_hourly_detail_active() => {
+            format_count(lang, app.hourly_detail_rows_len(), MessageKey::CountModels)
+        }
         Tab::Hourly => format_count(lang, app.data.hourly.len(), MessageKey::CountHours),
         Tab::Minutely => format_count(lang, app.data.minutely.len(), MessageKey::CountMinutes),
-        Tab::Monthly if app.is_monthly_detail_active() => format_count(
-            lang,
-            app.get_sorted_monthly_detail_days().len(),
-            MessageKey::CountDays,
-        ),
+        Tab::Monthly if app.is_monthly_detail_active() => {
+            format_count(lang, app.monthly_detail_days_len(), MessageKey::CountDays)
+        }
         Tab::Monthly => format_count(lang, app.data.monthly.len(), MessageKey::CountMonths),
         Tab::Sessions => format_count(lang, app.active_sessions().len(), MessageKey::CountSessions),
         Tab::Projects => format_count(lang, app.data.projects.len(), MessageKey::CountProjects),

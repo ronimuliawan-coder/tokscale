@@ -2413,9 +2413,9 @@ impl App {
 
     fn get_current_list_len(&self) -> usize {
         match self.current_tab {
-            Tab::Models if self.is_model_trend_active() => self.get_sorted_model_trend_rows().len(),
+            Tab::Models if self.is_model_trend_active() => self.model_trend_rows_len(),
             Tab::Overview | Tab::Models if self.is_model_detail_view_active() => {
-                self.get_sorted_model_detail_rows_count()
+                self.get_model_detail_rows_count()
             }
             Tab::Overview | Tab::Models if self.is_model_detail_menu_active() => {
                 ModelDetailViewType::ALL.len()
@@ -2428,43 +2428,15 @@ impl App {
                 .map(|client| client.models.len())
                 .unwrap_or(0),
             Tab::Clients => self.data.clients.len(),
-            Tab::Daily if self.is_daily_detail_active() => {
-                self.get_sorted_daily_detail_rows().len()
-            }
+            Tab::Daily if self.is_daily_detail_active() => self.daily_detail_rows_len(),
             Tab::Daily => self.data.daily.len(),
-            Tab::Hourly if self.is_hourly_detail_active() => {
-                // Cheap count: rows are one per (source, model) pair — avoid
-                // rebuilding the whole row set on every 100 ms tick.
-                self.selected_hourly_detail_dt
-                    .and_then(|dt| self.data.hourly.iter().find(|h| h.datetime == dt))
-                    .map(|hour| {
-                        if hour.source_breakdown.is_empty() {
-                            hour.models.len()
-                        } else {
-                            match self.selected_hourly_detail_source.as_deref() {
-                                Some(src) => hour
-                                    .source_breakdown
-                                    .get(src)
-                                    .map(|info| info.models.len())
-                                    .unwrap_or(0),
-                                None => hour
-                                    .source_breakdown
-                                    .values()
-                                    .map(|info| info.models.len())
-                                    .sum(),
-                            }
-                        }
-                    })
-                    .unwrap_or(0)
-            }
+            Tab::Hourly if self.is_hourly_detail_active() => self.hourly_detail_rows_len(),
             Tab::Hourly if self.hourly_view_mode == HourlyViewMode::Profile => {
                 self.hourly_profile_total_lines
             }
             Tab::Hourly => self.get_sorted_hourly_rows().len(),
             Tab::Minutely => self.data.minutely.len(),
-            Tab::Monthly if self.is_monthly_detail_active() => {
-                self.get_sorted_monthly_detail_days().len()
-            }
+            Tab::Monthly if self.is_monthly_detail_active() => self.monthly_detail_days_len(),
             Tab::Monthly => self.data.monthly.len(),
             Tab::Sessions => self.active_sessions().len(),
             Tab::Projects => self.data.projects.len(),
@@ -3305,6 +3277,11 @@ impl App {
         days
     }
 
+    pub fn model_trend_rows_len(&self) -> usize {
+        self.model_trend_model()
+            .map_or(0, |model| model.daily.len())
+    }
+
     pub fn is_monthly_detail_active(&self) -> bool {
         self.selected_monthly_detail_month.is_some()
     }
@@ -3313,13 +3290,15 @@ impl App {
         self.selected_monthly_detail_month.as_deref()
     }
 
+    fn monthly_detail_month_parts(&self) -> Option<(i32, u32)> {
+        let month = self.selected_monthly_detail_month.as_ref()?;
+        month
+            .split_once('-')
+            .and_then(|(year, month)| Some((year.parse::<i32>().ok()?, month.parse::<u32>().ok()?)))
+    }
+
     pub fn get_sorted_monthly_detail_days(&self) -> Vec<&DailyUsage> {
-        let Some(month) = self.selected_monthly_detail_month.as_ref() else {
-            return Vec::new();
-        };
-        let Some((year, month)) = month.split_once('-').and_then(|(year, month)| {
-            Some((year.parse::<i32>().ok()?, month.parse::<u32>().ok()?))
-        }) else {
+        let Some((year, month)) = self.monthly_detail_month_parts() else {
             return Vec::new();
         };
 
@@ -3327,6 +3306,18 @@ impl App {
             .into_iter()
             .filter(|day| day.date.year() == year && day.date.month() == month)
             .collect()
+    }
+
+    pub fn monthly_detail_days_len(&self) -> usize {
+        let Some((year, month)) = self.monthly_detail_month_parts() else {
+            return 0;
+        };
+
+        self.data
+            .daily
+            .iter()
+            .filter(|day| day.date.year() == year && day.date.month() == month)
+            .count()
     }
 
     pub fn get_sorted_daily_detail_rows(&self) -> Vec<DailyDetailRow<'_>> {
@@ -3387,6 +3378,25 @@ impl App {
         }
 
         rows
+    }
+
+    /// Cheap count: rows are one per (source, model) pair — avoid rebuilding
+    /// the whole row set on every 100 ms tick.
+    pub fn daily_detail_rows_len(&self) -> usize {
+        let Some(date) = self.selected_daily_detail_date else {
+            return 0;
+        };
+        self.data
+            .daily
+            .iter()
+            .find(|day| day.date == date)
+            .map(|day| {
+                day.source_breakdown
+                    .values()
+                    .map(|source| source.models.len())
+                    .sum()
+            })
+            .unwrap_or(0)
     }
 
     #[allow(dead_code)]
@@ -3521,6 +3531,33 @@ impl App {
         }
 
         rows
+    }
+
+    /// Cheap count: rows are one per displayed model of the selected hour
+    /// (scoped to one source when the detail was opened from a split row) —
+    /// avoid rebuilding the whole row set on every 100 ms tick.
+    pub fn hourly_detail_rows_len(&self) -> usize {
+        self.selected_hourly_detail_dt
+            .and_then(|dt| self.data.hourly.iter().find(|h| h.datetime == dt))
+            .map(|hour| {
+                if hour.source_breakdown.is_empty() {
+                    hour.models.len()
+                } else {
+                    match self.selected_hourly_detail_source.as_deref() {
+                        Some(src) => hour
+                            .source_breakdown
+                            .get(src)
+                            .map(|info| info.models.len())
+                            .unwrap_or(0),
+                        None => hour
+                            .source_breakdown
+                            .values()
+                            .map(|info| info.models.len())
+                            .sum(),
+                    }
+                }
+            })
+            .unwrap_or(0)
     }
 
     pub fn get_sorted_hourly_rows(&self) -> Vec<HourlyDisplayRow<'_>> {
@@ -3881,28 +3918,102 @@ impl App {
         }
     }
 
-    pub fn get_sorted_model_detail_rows_count(&self) -> usize {
-        let Some(ref state) = self.model_detail else {
+    /// Number of rows the active model-detail view displays, computed without
+    /// building or sorting those rows. Each count mirrors its
+    /// `get_model_*_rows` builder; the parity tests keep the pairs honest.
+    pub fn get_model_detail_rows_count(&self) -> usize {
+        let Some(state) = self.model_detail.as_ref() else {
             return 0;
         };
         match state.active_view {
-            Some(ModelDetailViewType::Daily) => self
-                .get_model_daily_rows_scoped(&state.model_name, &state.group_key)
-                .len(),
-            Some(ModelDetailViewType::Hourly) => {
-                self.get_model_hourly_rows(&state.model_name).len()
+            Some(ModelDetailViewType::Daily) => {
+                self.model_daily_rows_count(&state.model_name, &state.group_key)
             }
-            Some(ModelDetailViewType::Clients) => {
-                self.get_model_client_rows(&state.model_name).len()
+            Some(ModelDetailViewType::Hourly) => self.model_hourly_rows_count(&state.model_name),
+            Some(ModelDetailViewType::Clients) => self.model_client_rows_count(&state.model_name),
+            Some(ModelDetailViewType::Sessions) => self.model_session_rows_count(&state.model_name),
+            Some(ModelDetailViewType::Monthly) => {
+                self.model_monthly_rows_count(&state.model_name, &state.group_key)
             }
-            Some(ModelDetailViewType::Sessions) => {
-                self.get_model_session_rows(&state.model_name).len()
-            }
-            Some(ModelDetailViewType::Monthly) => self
-                .get_model_monthly_rows(&state.model_name, &state.group_key)
-                .len(),
             None => 0,
         }
+    }
+
+    fn model_daily_rows_count(&self, model: &str, group_key: &str) -> usize {
+        if let Some(row) = self.resolve_model_usage_row(model, group_key) {
+            if !row.daily.is_empty() {
+                return row.daily.len();
+            }
+        }
+        self.data
+            .daily
+            .iter()
+            .filter(|day| {
+                day.source_breakdown
+                    .values()
+                    .any(|source| source.models.contains_key(model))
+            })
+            .count()
+    }
+
+    fn model_hourly_rows_count(&self, model: &str) -> usize {
+        self.data
+            .hourly
+            .iter()
+            .map(|hour| {
+                if hour.source_breakdown.is_empty() {
+                    usize::from(hour.models.contains_key(model))
+                } else {
+                    hour.source_breakdown
+                        .values()
+                        .filter(|source| source.models.contains_key(model))
+                        .count()
+                }
+            })
+            .sum()
+    }
+
+    fn model_client_rows_count(&self, model: &str) -> usize {
+        self.data
+            .clients
+            .iter()
+            .filter(|client| client.models.contains_key(model))
+            .count()
+    }
+
+    fn model_session_rows_count(&self, model: &str) -> usize {
+        self.data
+            .sessions
+            .iter()
+            .filter(|session| {
+                session
+                    .models
+                    .iter()
+                    .any(|entry| entry.display_name == model || entry.color_key == model)
+            })
+            .count()
+    }
+
+    fn model_monthly_rows_count(&self, model: &str, group_key: &str) -> usize {
+        let mut months: HashSet<(i32, u32)> = HashSet::new();
+        if let Some(row) = self.resolve_model_usage_row(model, group_key) {
+            if !row.daily.is_empty() {
+                for day in &row.daily {
+                    months.insert((day.date.year(), day.date.month()));
+                }
+                return months.len();
+            }
+        }
+        for day in &self.data.daily {
+            if day
+                .source_breakdown
+                .values()
+                .any(|source| source.models.contains_key(model))
+            {
+                months.insert((day.date.year(), day.date.month()));
+            }
+        }
+        months.len()
     }
 
     /// Resolves the Models-tab row the detail state was opened from. The
@@ -4478,7 +4589,9 @@ mod tests {
         UsageAccount, UsageFetchDiagnostic, UsageFetchReport, UsageMetric, UsageOutput,
     };
     use crate::tui::data::{
-        DailyModelInfo, DailySourceInfo, ModelDayUsage, ModelUsage, TokenBreakdown,
+        ClientModelInfo, ClientUsage, DailyModelInfo, DailySourceInfo, HourlyModelInfo,
+        HourlySourceInfo, HourlyUsage, ModelDayUsage, ModelUsage, SessionModel, SessionUsage,
+        TokenBreakdown,
     };
     use chrono::{NaiveDate, NaiveDateTime};
     use std::collections::{BTreeMap, BTreeSet};
@@ -5569,6 +5682,284 @@ mod tests {
         });
 
         assert!(!app.is_monthly_detail_active());
+    }
+
+    fn model_detail_state(view: ModelDetailViewType) -> ModelDetailState {
+        ModelDetailState {
+            model_name: "gpt-5".to_string(),
+            group_key: "gpt-5".to_string(),
+            provider: "openai".to_string(),
+            color_key: "gpt-5".to_string(),
+            active_view: Some(view),
+            menu_cursor: 0,
+        }
+    }
+
+    fn model_usage_with_daily(model: &str, dates: &[&str]) -> ModelUsage {
+        ModelUsage {
+            model: model.to_string(),
+            color_key: model.to_string(),
+            provider: "openai".to_string(),
+            client: "codex".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            machine: None,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            performance: Default::default(),
+            session_count: 1,
+            group_key: model.to_string(),
+            daily: dates
+                .iter()
+                .map(|date| ModelDayUsage {
+                    date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 0.0,
+                    messages: 0,
+                    performance: Default::default(),
+                })
+                .collect(),
+        }
+    }
+
+    fn hourly_model(model: &str) -> HourlyModelInfo {
+        HourlyModelInfo {
+            provider: "openai".to_string(),
+            display_name: model.to_string(),
+            color_key: model.to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            messages: 0,
+        }
+    }
+
+    fn hourly_source(models: &[&str]) -> HourlySourceInfo {
+        HourlySourceInfo {
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
+            turn_count: 0,
+            models: models
+                .iter()
+                .map(|model| (model.to_string(), hourly_model(model)))
+                .collect(),
+        }
+    }
+
+    fn hourly_entry(datetime: &str, models: &[&str], sources: &[(&str, Vec<&str>)]) -> HourlyUsage {
+        HourlyUsage {
+            datetime: NaiveDateTime::parse_from_str(datetime, "%Y-%m-%d %H:%M:%S").unwrap(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            clients: BTreeSet::new(),
+            models: models
+                .iter()
+                .map(|model| (model.to_string(), hourly_model(model)))
+                .collect(),
+            source_breakdown: sources
+                .iter()
+                .map(|(source, models)| (source.to_string(), hourly_source(models)))
+                .collect(),
+            client_breakdown: BTreeMap::new(),
+            message_count: 0,
+            turn_count: 0,
+        }
+    }
+
+    fn client_usage_with_model(client: &str, model: &str) -> ClientUsage {
+        ClientUsage {
+            client: client.to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
+            session_count: 0,
+            turn_count: 0,
+            models: BTreeMap::from([(
+                model.to_string(),
+                ClientModelInfo {
+                    provider: "openai".to_string(),
+                    display_name: model.to_string(),
+                    color_key: model.to_string(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 0.0,
+                    message_count: 0,
+                },
+            )]),
+            first_active_ms: 0,
+            last_active_ms: 0,
+        }
+    }
+
+    fn session_with_model(client: &str, id: &str, model: &str, color_key: &str) -> SessionUsage {
+        let mut session = SessionUsage::new(client, id);
+        session.models.push(SessionModel {
+            display_name: model.to_string(),
+            provider: "openai".to_string(),
+            color_key: color_key.to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            message_count: 0,
+        });
+        session
+    }
+
+    #[test]
+    fn test_model_detail_count_matches_builder_rows_for_every_view() {
+        let mut app = make_app();
+        app.data.models = vec![model_usage_with_daily(
+            "gpt-5",
+            &["2026-01-02", "2026-01-03", "2026-02-01"],
+        )];
+        app.data.hourly = vec![
+            hourly_entry(
+                "2026-01-02 09:00:00",
+                &[],
+                &[
+                    ("claude", vec!["gpt-5"]),
+                    ("codex", vec!["gpt-5", "gpt-4o"]),
+                ],
+            ),
+            hourly_entry("2026-01-02 10:00:00", &["gpt-5"], &[]),
+            hourly_entry("2026-01-02 11:00:00", &[], &[("claude", vec!["gpt-4o"])]),
+        ];
+        app.data.clients = vec![
+            client_usage_with_model("claude", "gpt-5"),
+            client_usage_with_model("codex", "gpt-5"),
+            client_usage_with_model("cursor", "gpt-4o"),
+        ];
+        app.data.sessions = vec![
+            session_with_model("claude", "s1", "gpt-5", "openai:gpt-5"),
+            session_with_model("codex", "s2", "other", "gpt-5"),
+            session_with_model("cursor", "s3", "gpt-4o", "openai:gpt-4o"),
+        ];
+
+        let cases = [
+            (ModelDetailViewType::Daily, 3usize),
+            (ModelDetailViewType::Hourly, 3),
+            (ModelDetailViewType::Clients, 2),
+            (ModelDetailViewType::Sessions, 2),
+            (ModelDetailViewType::Monthly, 2),
+        ];
+        for (view, expected) in cases {
+            app.model_detail = Some(model_detail_state(view));
+            let materialized = match view {
+                ModelDetailViewType::Daily => {
+                    app.get_model_daily_rows_scoped("gpt-5", "gpt-5").len()
+                }
+                ModelDetailViewType::Hourly => app.get_model_hourly_rows("gpt-5").len(),
+                ModelDetailViewType::Clients => app.get_model_client_rows("gpt-5").len(),
+                ModelDetailViewType::Sessions => app.get_model_session_rows("gpt-5").len(),
+                ModelDetailViewType::Monthly => app.get_model_monthly_rows("gpt-5", "gpt-5").len(),
+            };
+
+            assert_eq!(materialized, expected, "builder rows for {view:?}");
+            assert_eq!(
+                app.get_model_detail_rows_count(),
+                materialized,
+                "cheap count drifted from the builder for {view:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_detail_count_follows_daily_fallback_when_row_has_no_days() {
+        let mut app = make_app();
+        app.data.models = vec![model_usage_with_daily("gpt-5", &[])];
+        app.data.daily = vec![
+            daily_usage("2026-01-02", 1.0, vec![("gpt-5", "openai", 1.0)]),
+            daily_usage("2026-02-03", 1.0, vec![("gpt-5", "openai", 1.0)]),
+            daily_usage("2026-02-04", 1.0, vec![("gpt-4o", "openai", 1.0)]),
+        ];
+
+        app.model_detail = Some(model_detail_state(ModelDetailViewType::Daily));
+        assert_eq!(
+            app.get_model_detail_rows_count(),
+            app.get_model_daily_rows_scoped("gpt-5", "gpt-5").len()
+        );
+        assert_eq!(app.get_model_detail_rows_count(), 2);
+
+        app.model_detail = Some(model_detail_state(ModelDetailViewType::Monthly));
+        assert_eq!(
+            app.get_model_detail_rows_count(),
+            app.get_model_monthly_rows("gpt-5", "gpt-5").len()
+        );
+        assert_eq!(app.get_model_detail_rows_count(), 2);
+    }
+
+    #[test]
+    fn test_footer_detail_count_helpers_match_builders() {
+        let mut app = make_app();
+        app.data.models = vec![model_usage_with_daily(
+            "gpt-5",
+            &["2026-01-02", "2026-01-03"],
+        )];
+        app.selected_model_trend = Some("gpt-5".to_string());
+        assert_eq!(
+            app.model_trend_rows_len(),
+            app.get_sorted_model_trend_rows().len()
+        );
+        assert_eq!(app.model_trend_rows_len(), 2);
+
+        app.data.daily = vec![
+            daily_usage(
+                "2026-01-02",
+                1.0,
+                vec![("gpt-5", "openai", 1.0), ("gpt-4o", "openai", 1.0)],
+            ),
+            daily_usage("2026-01-03", 1.0, vec![("gpt-5", "openai", 1.0)]),
+            daily_usage("2026-02-01", 1.0, vec![("gpt-5", "openai", 1.0)]),
+        ];
+        app.selected_daily_detail_date = Some(NaiveDate::from_ymd_opt(2026, 1, 2).unwrap());
+        assert_eq!(
+            app.daily_detail_rows_len(),
+            app.get_sorted_daily_detail_rows().len()
+        );
+        assert_eq!(app.daily_detail_rows_len(), 2);
+
+        app.data.hourly = vec![
+            hourly_entry(
+                "2026-01-02 09:00:00",
+                &[],
+                &[
+                    ("claude", vec!["gpt-5", "gpt-4o"]),
+                    ("codex", vec!["gpt-5"]),
+                ],
+            ),
+            hourly_entry("2026-01-02 10:00:00", &["gpt-5", "gpt-4o"], &[]),
+        ];
+        app.selected_hourly_detail_dt = Some(
+            NaiveDateTime::parse_from_str("2026-01-02 09:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        );
+        app.selected_hourly_detail_source = None;
+        assert_eq!(
+            app.hourly_detail_rows_len(),
+            app.get_sorted_hourly_detail_rows().len()
+        );
+        assert_eq!(app.hourly_detail_rows_len(), 3);
+
+        app.selected_hourly_detail_source = Some("codex".to_string());
+        assert_eq!(
+            app.hourly_detail_rows_len(),
+            app.get_sorted_hourly_detail_rows().len()
+        );
+        assert_eq!(app.hourly_detail_rows_len(), 1);
+
+        app.selected_hourly_detail_dt = Some(
+            NaiveDateTime::parse_from_str("2026-01-02 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        );
+        app.selected_hourly_detail_source = None;
+        assert_eq!(
+            app.hourly_detail_rows_len(),
+            app.get_sorted_hourly_detail_rows().len()
+        );
+        assert_eq!(app.hourly_detail_rows_len(), 2);
+
+        app.selected_monthly_detail_month = Some("2026-01".to_string());
+        assert_eq!(
+            app.monthly_detail_days_len(),
+            app.get_sorted_monthly_detail_days().len()
+        );
+        assert_eq!(app.monthly_detail_days_len(), 2);
     }
 
     #[test]
