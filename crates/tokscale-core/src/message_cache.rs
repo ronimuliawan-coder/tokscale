@@ -1749,7 +1749,8 @@ const SHARED_PARSER_FAMILIES: &[SharedParserFamily] = &[
             // +1 more: Pi now counts the billed operations that are not
             // assistant replies (`compaction`, `branch_summary`, `usage`,
             // `toolResult`), which version-6 caches omit entirely.
-            (ClientId::Pi, 3),
+            // +1 more: use ordinary Pi session_info names as display titles.
+            (ClientId::Pi, 4),
             // +1: Kimchi's Pi-compatible messages now carry stable
             // namespaced deduplication keys.
             // +1 more: billed operations, as for Pi. The shared base did not
@@ -2088,7 +2089,9 @@ fn parser_version(client: ClientId) -> u32 {
         // request's start. Untouched wire files keep valid fingerprints, so a
         // warm v4 entry would keep replaying rows with no duration sample and
         // the ms/1K column would stay empty for them.
-        ClientId::Kimi => 5,
+        // v5->v6: recover native step timing when llm.request is absent.
+        // v6->v7: retain legacy request timing across a matching step.begin.
+        ClientId::Kimi => 7,
         // v1->v2: cache-write now maps directly from `Input (w/ Cache Write)`
         // instead of subtracting `Input (w/o Cache Write)`, and a numeric CSV
         // `Cost` (including explicit zero) is retained as provider-reported so
@@ -2245,10 +2248,8 @@ fn parser_version(client: ClientId) -> u32 {
         // `usage.timestamp`. Reparse old rows so those messages move off the
         // synthesized `created + messageId * 1000` time onto their real day.
         ClientId::Amp => 2,
-        // The remaining clients parse their own formats and have never
-        // shipped a parser-only change that leaves byte-identical input
-        // parsing differently, so all of them are at version 1. Repeating
-        // values across independent parsers is harmless -- every cache
+        // These clients parse independent formats. Repeating
+        // version numbers across independent parsers is harmless -- every cache
         // identity is namespaced by `client.as_str()` first, so one client's
         // bump can never invalidate or collide with another's entries
         // (`CacheIdentity` / `CachedSourceEntry::matches_identity`). Sharing
@@ -2272,7 +2273,8 @@ fn parser_version(client: ClientId) -> u32 {
         ClientId::Goose => 1,
         // v1->v2: fall back to session_meta / file mtime when usage timestamp is null.
         ClientId::Antigravity => 2,
-        ClientId::Zed => 1,
+        // v1->v2: include native ChatGPT subscription threads and use their cumulative totals.
+        ClientId::Zed => 2,
         ClientId::Trae => 1,
         ClientId::Warp => 1,
         ClientId::Gjc => 1,
@@ -2297,6 +2299,9 @@ fn parser_version(client: ClientId) -> u32 {
         // v1->v2: extract workspace key from project ancestors avoiding
         // subagents and canonicalize BYOK/managed provider metadata.
         ClientId::Qoder => crate::sessions::qoder::QODER_PARSER_BASE_VERSION,
+        // v2: dedup keys include canonical interval end/granularity so a
+        // carried midnight hour does not suppress its residual daily row.
+        ClientId::Capy => 2,
         // Shared-family members are versioned by `SHARED_PARSER_FAMILIES`
         // through the roster lookup at the top of this function. Listing
         // them here keeps the match exhaustive at compile time; reaching
@@ -6686,8 +6691,8 @@ mod tests {
     }
 
     #[test]
-    fn test_kimi_parser_version_invalidates_v4_entries() {
-        assert_eq!(parser_version(ClientId::Kimi), 5);
+    fn test_kimi_parser_version_invalidates_v6_entries() {
+        assert_eq!(parser_version(ClientId::Kimi), 7);
     }
 
     #[test]
@@ -6697,7 +6702,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_kimi_v5_cache_reused_with_current_workspace_metadata() {
+    fn test_kimi_current_cache_reused_with_current_workspace_metadata() {
         let cache_home = TempDir::new().unwrap();
         let source_home = TempDir::new().unwrap();
         let _cache_env = sandbox_cache_env(cache_home.path());
@@ -6720,10 +6725,7 @@ mod tests {
         // A full reparse would restore the path-derived session ID, so this
         // marker distinguishes a cache hit from equivalent parsed usage.
         cached_messages[0].session_id = "cache-hit-marker".to_string().into();
-        let identity = CacheIdentity {
-            namespace: "kimi",
-            parser_version: 5,
-        };
+        let identity = CacheIdentity::for_client(ClientId::Kimi);
         let fingerprint = SourceFingerprint::from_kimi_path(&wire_path).unwrap();
         let mut cache = SourceMessageCache::default();
         cache.insert(CachedSourceEntry::new(
@@ -6769,6 +6771,101 @@ mod tests {
         }
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn capy_v2_rebuilds_persisted_v1_midnight_undercount() {
+        let home = TempDir::new().unwrap();
+        let _env = sandbox_cache_env(home.path());
+        let capy_dir = PathBuf::from(
+            ClientId::Capy
+                .data()
+                .resolve_path_with_env_strategy(home.path().to_str().unwrap(), false),
+        );
+        fs::create_dir_all(&capy_dir).unwrap();
+        let source = capy_dir.join("usage.json");
+        fs::write(
+            &source,
+            r#"{
+                "version": 1,
+                "items": [
+                    {
+                        "start": "2026-10-14T00:00:00Z",
+                        "end": "2026-10-14T01:00:00Z",
+                        "dimensions": {"userId": "u", "threadId": "t", "itemType": "llm",
+                            "model": "openai/gpt-5.5"},
+                        "tokens": {"inputTokens": 100, "outputTokens": 10,
+                            "cacheReadTokens": 0, "cacheWriteTokens": 0}
+                    },
+                    {
+                        "start": "2026-10-14T00:00:00Z",
+                        "end": "2026-10-15T00:00:00Z",
+                        "dimensions": {"userId": "u", "threadId": "t", "itemType": "llm",
+                            "model": "openai/gpt-5.5"},
+                        "tokens": {"inputTokens": 200, "outputTokens": 20,
+                            "cacheReadTokens": 0, "cacheWriteTokens": 0}
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let current = CacheIdentity::for_client(ClientId::Capy);
+        assert_eq!(current.parser_version, 2);
+        let predecessor = CacheIdentity {
+            namespace: current.namespace,
+            parser_version: 1,
+        };
+        let fingerprint = SourceFingerprint::from_path(&source).unwrap();
+        let mut undercount = crate::sessions::capy::parse_capy_file(&source);
+        assert_eq!(undercount.len(), 2);
+        undercount.retain(|message| message.tokens.input == 100);
+        assert_eq!(undercount.len(), 1);
+        let legacy_entry = CachedSourceEntry::new(
+            predecessor,
+            &source,
+            fingerprint.clone(),
+            undercount,
+            Vec::new(),
+            None,
+        );
+        let shard = cache_shard_path(current, &source);
+        ensure_cache_dir(shard.parent().unwrap()).unwrap();
+        write_shard_with_limit(&shard, predecessor, &[legacy_entry], MAX_CACHE_SHARD_BYTES)
+            .unwrap();
+        assert!(matches!(
+            read_shard(&shard, current),
+            ShardReadStatus::Stale
+        ));
+
+        let scan = || {
+            crate::parse_all_messages_with_pricing_with_env_strategy(
+                home.path().to_str().unwrap(),
+                &["capy".to_string()],
+                None,
+                false,
+                &crate::scanner::ScannerSettings::default(),
+            )
+        };
+        let rebuilt = scan();
+        assert_eq!(rebuilt.len(), 2);
+        let mut totals: Vec<_> = rebuilt
+            .iter()
+            .map(|message| (message.tokens.input, message.tokens.output))
+            .collect();
+        totals.sort_unstable();
+        assert_eq!(totals, [(100, 10), (200, 20)]);
+
+        let persisted = SourceMessageCache::load();
+        let entry = persisted.get(current, &source).unwrap();
+        assert_eq!(entry.parser_version, 2);
+        assert!(matches!(
+            SourceFingerprint::check_path_samples_only(&source, Some(&entry.fingerprint)),
+            Some(FingerprintStatus::Unchanged)
+        ));
+        assert_eq!(entry.messages.len(), 2);
+        assert_eq!(scan(), rebuilt, "the rebuilt v2 entry must be a warm hit");
+    }
+
     /// Successive parser changes each need their own version. #1285 took v2
     /// for the compressed-archive decode. #1278 then needed v3, not a reuse of
     /// 2: a warm v2 cache carries neither the dedup keys nor the reasoning
@@ -6810,7 +6907,11 @@ mod tests {
             (ClientId::PrimeAgent, 6),
         ] {
             let current = CacheIdentity::for_client(client);
-            let expected_diff = if client == ClientId::Omp { 4 } else { 3 };
+            let expected_diff = if matches!(client, ClientId::Omp | ClientId::Pi) {
+                4
+            } else {
+                3
+            };
             assert_eq!(
                 current.parser_version,
                 previous_version + expected_diff,
@@ -6856,7 +6957,11 @@ mod tests {
             (ClientId::PrimeAgent, 8),
         ] {
             let current = CacheIdentity::for_client(client);
-            let expected_diff = if client == ClientId::Omp { 2 } else { 1 };
+            let expected_diff = if matches!(client, ClientId::Omp | ClientId::Pi) {
+                2
+            } else {
+                1
+            };
             assert_eq!(
                 current.parser_version,
                 pre_merge_version + expected_diff,
@@ -6902,7 +7007,11 @@ mod tests {
             (ClientId::PrimeAgent, 7),
         ] {
             let current = CacheIdentity::for_client(client);
-            let expected_diff = if client == ClientId::Omp { 3 } else { 2 };
+            let expected_diff = if matches!(client, ClientId::Omp | ClientId::Pi) {
+                3
+            } else {
+                2
+            };
             assert_eq!(
                 current.parser_version,
                 completion_anchored_version + expected_diff,
@@ -7149,6 +7258,62 @@ mod tests {
         let entry = warm.get(current_identity, source.path()).unwrap();
         assert_eq!(entry.parser_version, 4);
         assert_eq!(entry.messages, vec![rebuilt]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn zed_cache_reparses_v1_sqlite_entries_for_subscription_threads() {
+        let cache_home = TempDir::new().unwrap();
+        let source_home = TempDir::new().unwrap();
+        let _cache_env = sandbox_cache_env(cache_home.path());
+        let db_path = source_home
+            .path()
+            .join("AppData/Local/Zed/threads/threads.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT, updated_at TEXT, data_type TEXT, data BLOB);",
+        )
+        .unwrap();
+        for (id, provider) in [("hosted", "zed.dev"), ("native", "openai-subscribed")] {
+            let payload = serde_json::json!({
+                "model": {"provider": provider, "model": "gpt-5.2"},
+                "cumulative_token_usage": {"input_tokens": 12, "output_tokens": 3}
+            });
+            conn.execute(
+                "INSERT INTO threads VALUES (?1, '2026-05-01T12:30:00Z', 'json', ?2)",
+                rusqlite::params![id, payload.to_string().into_bytes()],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let current = CacheIdentity::for_client(ClientId::Zed);
+        let old = CacheIdentity {
+            parser_version: 1,
+            ..current
+        };
+        let mut stale = test_entry(old, &db_path, "hosted");
+        stale.fingerprint = SourceFingerprint::from_sqlite_path(&db_path).unwrap();
+        let shard = cache_shard_path(current, &db_path);
+        ensure_cache_dir(shard.parent().unwrap()).unwrap();
+        write_shard_with_limit(&shard, old, &[stale], MAX_CACHE_SHARD_BYTES).unwrap();
+
+        let messages = crate::parse_all_messages_with_pricing_with_env_strategy(
+            source_home.path().to_str().unwrap(),
+            &["zed".to_string()],
+            None,
+            false,
+            &crate::scanner::ScannerSettings::default(),
+        );
+        assert_eq!(messages.len(), 2);
+        let native = messages
+            .iter()
+            .find(|message| message.session_id == "native")
+            .unwrap();
+        assert_eq!(native.provider_id, "openai-subscribed");
+        assert_eq!(native.tokens.total(), 15);
+        assert_eq!(current.parser_version, 2);
     }
 
     #[test]
@@ -9475,7 +9640,7 @@ mod tests {
             (
                 "pi-format",
                 &[
-                    (ClientId::Pi, 3),
+                    (ClientId::Pi, 4),
                     (ClientId::Kimchi, 2),
                     (ClientId::Omp, 3),
                     (ClientId::Senpi, 2),

@@ -2781,6 +2781,7 @@ mod tests {
         assert_eq!(clients[58], ClientId::Proma);
         assert_eq!(clients[59], ClientId::Bb);
         assert_eq!(clients[60], ClientId::Qoder);
+        assert_eq!(clients[61], ClientId::Capy);
     }
 
     #[test]
@@ -2847,6 +2848,7 @@ mod tests {
             "Proma",
             "BB",
             "Qoder",
+            "Capy",
         ];
 
         assert_eq!(expected.len(), ClientId::COUNT);
@@ -3044,6 +3046,10 @@ mod tests {
         assert_eq!(
             crate::tui::client_ui::from_hotkey('Q'),
             Some(ClientId::Qoder)
+        );
+        assert_eq!(
+            crate::tui::client_ui::from_hotkey('!'),
+            Some(ClientId::Capy)
         );
     }
 
