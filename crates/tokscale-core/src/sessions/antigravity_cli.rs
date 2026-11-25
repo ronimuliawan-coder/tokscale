@@ -3,7 +3,10 @@
 //! Antigravity CLI conversations live under
 //! `~/.gemini/antigravity-cli/conversations/<uuid>.db`; IDE extension
 //! conversations live under `~/.gemini/antigravity/conversations/<uuid>.db`.
-//! Both store generation metadata in the same SQLite format and are read
+//! T3 Code's Antigravity provider writes the same database family under
+//! `~/.t3/userdata/providers/antigravity/<install-sha>/antigravity-acp/conversations/`,
+//! and the scanner feeds those files to the CLI parser as built-in extra roots.
+//! All three store generation metadata in the same SQLite format and are read
 //! directly, without RPC or `antigravity sync`.
 //!
 //! Each `gen_metadata` row is one generation encoded as the same

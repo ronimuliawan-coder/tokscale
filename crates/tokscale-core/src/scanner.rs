@@ -931,6 +931,33 @@ pub fn built_in_extra_scan_paths_for(
         ));
     }
 
+    if enabled.contains(&ClientId::AntigravityCli) {
+        // T3 Code runs Antigravity over ACP and keeps each install's
+        // conversations at
+        // `<home>/.t3/userdata/providers/antigravity/<install-sha>/antigravity-acp/conversations`.
+        // Those are the same generation databases the Antigravity CLI parser
+        // reads, so scan only the conversations directories: a single install
+        // also holds thousands of `brain/` sidecars, and a recursive walk from
+        // the provider root would stat every one of them on each scan. A
+        // relocated T3 userdata directory can still be added through
+        // `scanner.extraScanPaths.antigravity-cli`.
+        let t3_provider_root =
+            join_native_path(Path::new(home_dir), ".t3/userdata/providers/antigravity");
+        if let Ok(installs) = std::fs::read_dir(&t3_provider_root) {
+            let mut conversations: Vec<PathBuf> = installs
+                .filter_map(|entry| entry.ok())
+                .map(|install| install.path().join("antigravity-acp/conversations"))
+                .filter(|path| path.is_dir())
+                .collect();
+            conversations.sort();
+            paths.extend(
+                conversations
+                    .into_iter()
+                    .map(|path| (ClientId::AntigravityCli, path)),
+            );
+        }
+    }
+
     if enabled.contains(&ClientId::Senpi) {
         // The user layer applies to every project that does not override it,
         // so it is read once rather than per discovered project.
@@ -4020,6 +4047,43 @@ mod tests {
             std::slice::from_ref(&expected)
         );
         assert_eq!(result.total_files(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_scan_all_clients_finds_t3_antigravity_conversations() {
+        let mut env = EnvGuard::capture(&["GEMINI_CLI_HOME"]);
+        env.remove("GEMINI_CLI_HOME");
+        let dir = TempDir::new().unwrap();
+        let home = dir.path();
+
+        let cli_db = write_db(home.join(".gemini/antigravity-cli/conversations/cli.db"));
+        let t3_db = write_db(home.join(
+            ".t3/userdata/providers/antigravity/install-a/antigravity-acp/conversations/a.db",
+        ));
+        let t3_second_db = write_db(home.join(
+            ".t3/userdata/providers/antigravity/install-b/antigravity-acp/conversations/b.db",
+        ));
+        // `brain/` holds sidecars, not generation databases; scanning the whole
+        // provider root recursively would pick this file up too.
+        let brain_db =
+            write_db(home.join(
+                ".t3/userdata/providers/antigravity/install-a/antigravity-acp/brain/sidecar.db",
+            ));
+
+        let result = scan_all_clients_with_env_strategy(
+            home.to_str().unwrap(),
+            &["antigravity-cli".to_string()],
+            false,
+        );
+
+        let mut found = result.get(ClientId::AntigravityCli).clone();
+        found.sort();
+        let mut expected = vec![cli_db, t3_db, t3_second_db];
+        expected.sort();
+
+        assert_eq!(found, expected);
+        assert!(!found.contains(&brain_db));
     }
 
     #[test]

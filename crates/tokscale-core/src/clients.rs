@@ -737,6 +737,13 @@ define_clients!(
     // over RPC and caches JSONL under the config dir), the CLI usage sits on
     // disk and is read directly — no RPC, no `antigravity sync` needed. Honors
     // `GEMINI_CLI_HOME` so a relocated Gemini home is picked up.
+    //
+    // T3 Code drives the same Antigravity engine over ACP and keeps per-install
+    // conversations under
+    // `~/.t3/userdata/providers/antigravity/<sha>/antigravity-acp/conversations/`.
+    // The scanner adds those directories as built-in extra roots (see
+    // `scanner::built_in_extra_scan_paths_for`), so both stores are parsed by
+    // this client and deduplicated by response ID across the family.
     AntigravityCli = 31 => {
         id: "antigravity-cli",
         display: "Antigravity CLI",
