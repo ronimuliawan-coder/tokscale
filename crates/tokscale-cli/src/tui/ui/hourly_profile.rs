@@ -6,7 +6,7 @@ use super::widgets::{
     get_client_display_name, viewport_scrollbar_state,
 };
 use crate::tui::app::App;
-use crate::tui::data::{aggregate_by_period, aggregate_by_weekday, find_peak_hour};
+use crate::tui::data::{aggregate_by_period, aggregate_by_weekday, find_peak_hour, ClientUsage};
 use crate::tui::i18n::{tr, MessageKey};
 use crate::ui_glyphs::ChartFill;
 use chrono::Timelike;
@@ -216,10 +216,10 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         )]));
         lines.push(Line::from(""));
 
-        let mut sorted_clients = app.data.clients.clone();
+        let mut sorted_clients: Vec<&ClientUsage> = app.data.clients.iter().collect();
         sorted_clients.sort_by_key(|a| std::cmp::Reverse(a.tokens.total()));
 
-        for client in sorted_clients.iter().take(6) {
+        for client in sorted_clients.into_iter().take(6) {
             let client_tokens = client.tokens.total();
             let pct = if total_tokens > 0 {
                 client_tokens as f64 / total_tokens as f64 * 100.0
@@ -564,5 +564,99 @@ mod tests {
         assert!(body.contains("84.2%")); // 800 / (100 + 800 + 50) = 800 / 950 = 84.2%
         assert!(body.contains("Peak:"));
         assert!(app.hourly_profile_total_lines > 0);
+    }
+
+    fn client_usage(client: &str, total_input: u64) -> ClientUsage {
+        ClientUsage {
+            client: client.to_string(),
+            tokens: TokenBreakdown {
+                input: total_input,
+                ..Default::default()
+            },
+            cost: 0.0,
+            message_count: 1,
+            session_count: 1,
+            turn_count: 1,
+            models: BTreeMap::new(),
+            first_active_ms: 0,
+            last_active_ms: 0,
+        }
+    }
+
+    fn hourly_entry(dt: NaiveDateTime) -> HourlyUsage {
+        HourlyUsage {
+            datetime: dt,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            clients: BTreeSet::new(),
+            models: BTreeMap::new(),
+            source_breakdown: BTreeMap::new(),
+            client_breakdown: BTreeMap::new(),
+            message_count: 0,
+            turn_count: 0,
+        }
+    }
+
+    fn render_profile_body(app: &mut App) -> String {
+        let backend = TestBackend::new(100, 60);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, app, Rect::new(0, 0, 100, 60)))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn hourly_profile_orders_clients_by_tokens_descending() {
+        // Characterization test for the client list: highest token total
+        // first, regardless of the order the clients arrive in.
+        let mut app = make_app();
+        let dt = NaiveDateTime::parse_from_str("2026-05-29 14:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        app.data.hourly = vec![hourly_entry(dt)];
+        app.data.total_tokens = 600;
+        app.data.clients = vec![
+            client_usage("alpha-low", 100),
+            client_usage("beta-high", 300),
+            client_usage("gamma-mid", 200),
+        ];
+
+        let body = render_profile_body(&mut app);
+
+        let high = body.find("beta-high").expect("high client rendered");
+        let mid = body.find("gamma-mid").expect("mid client rendered");
+        let low = body.find("alpha-low").expect("low client rendered");
+        assert!(high < mid, "300 tokens must render before 200");
+        assert!(mid < low, "200 tokens must render before 100");
+    }
+
+    #[test]
+    fn hourly_profile_shows_only_the_top_six_clients() {
+        // The client section is capped at six rows; the cap must take the six
+        // highest totals, not an arbitrary six.
+        let mut app = make_app();
+        let dt = NaiveDateTime::parse_from_str("2026-05-29 14:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        app.data.hourly = vec![hourly_entry(dt)];
+        app.data.total_tokens = 3600;
+        // Ascending input totals so the top six are the last six names.
+        app.data.clients = (1..=8)
+            .map(|i| client_usage(&format!("client-{i}"), i as u64 * 100))
+            .collect();
+
+        let body = render_profile_body(&mut app);
+
+        for i in 3..=8 {
+            assert!(
+                body.contains(&format!("client-{i}")),
+                "client-{i} is in the top six and must render"
+            );
+        }
+        assert!(!body.contains("client-1"), "client-1 is below the cap");
+        assert!(!body.contains("client-2"), "client-2 is below the cap");
     }
 }

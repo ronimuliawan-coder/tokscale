@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::spinner::{get_phase_message, get_scanner_spans};
 use super::widgets::{format_cost, format_tokens};
-use crate::tui::app::{App, ClickAction, SortField, Tab};
+use crate::tui::app::{App, ClickAction, ModelDetailViewType, SortField, Tab};
 use crate::tui::i18n::{format_count, tr, tr_with_glyphs, MessageKey, TuiLanguage};
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -214,11 +214,20 @@ fn render_main_row(frame: &mut Frame, app: &mut App, area: Rect) {
 fn current_count_label(app: &App) -> String {
     let lang = app.settings.tui_language;
     match app.current_tab {
-        Tab::Models if app.is_model_trend_active() => format_count(
-            lang,
-            app.get_sorted_model_trend_rows().len(),
-            MessageKey::CountDays,
-        ),
+        Tab::Models if app.is_model_trend_active() => {
+            format_count(lang, app.model_trend_rows_len(), MessageKey::CountDays)
+        }
+        Tab::Models if app.is_model_detail_view_active() => {
+            let key = match app.model_detail_view_type() {
+                Some(ModelDetailViewType::Daily) => MessageKey::CountDays,
+                Some(ModelDetailViewType::Hourly) => MessageKey::CountHours,
+                Some(ModelDetailViewType::Clients) => MessageKey::CountClients,
+                Some(ModelDetailViewType::Sessions) => MessageKey::CountSessions,
+                Some(ModelDetailViewType::Monthly) => MessageKey::CountMonths,
+                None => MessageKey::CountModels,
+            };
+            format_count(lang, app.get_model_detail_rows_count(), key)
+        }
         Tab::Overview | Tab::Models => {
             format_count(lang, app.data.models.len(), MessageKey::CountModels)
         }
@@ -233,19 +242,18 @@ fn current_count_label(app: &App) -> String {
         ),
         Tab::Clients => format_count(lang, app.data.clients.len(), MessageKey::CountClients),
         Tab::Agents => format_count(lang, app.data.agents.len(), MessageKey::CountAgents),
-        Tab::Daily if app.is_daily_detail_active() => format_count(
-            lang,
-            app.get_sorted_daily_detail_rows().len(),
-            MessageKey::CountModels,
-        ),
+        Tab::Daily if app.is_daily_detail_active() => {
+            format_count(lang, app.daily_detail_rows_len(), MessageKey::CountModels)
+        }
         Tab::Daily => format_count(lang, app.data.daily.len(), MessageKey::CountDays),
+        Tab::Hourly if app.is_hourly_detail_active() => {
+            format_count(lang, app.hourly_detail_rows_len(), MessageKey::CountModels)
+        }
         Tab::Hourly => format_count(lang, app.data.hourly.len(), MessageKey::CountHours),
         Tab::Minutely => format_count(lang, app.data.minutely.len(), MessageKey::CountMinutes),
-        Tab::Monthly if app.is_monthly_detail_active() => format_count(
-            lang,
-            app.get_sorted_monthly_detail_days().len(),
-            MessageKey::CountDays,
-        ),
+        Tab::Monthly if app.is_monthly_detail_active() => {
+            format_count(lang, app.monthly_detail_days_len(), MessageKey::CountDays)
+        }
         Tab::Monthly => format_count(lang, app.data.monthly.len(), MessageKey::CountMonths),
         Tab::Sessions => format_count(lang, app.active_sessions().len(), MessageKey::CountSessions),
         Tab::Projects => format_count(lang, app.data.projects.len(), MessageKey::CountProjects),
@@ -774,8 +782,11 @@ fn render_status_row(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::app::TuiConfig;
-    use crate::tui::data::UsageData;
+    use crate::tui::app::{ModelDetailState, ModelDetailViewType, TuiConfig};
+    use crate::tui::data::{
+        HourlyModelInfo, HourlyUsage, ModelDayUsage, ModelUsage, TokenBreakdown, UsageData,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn make_app_on(tab: Tab) -> App {
         let config = TuiConfig {
@@ -1133,6 +1144,143 @@ mod tests {
         app.settings.minutely_tab_enabled = true;
         app.current_tab = Tab::Minutely;
         assert_eq!(current_count_label(&app), " (0 minutes)");
+    }
+
+    fn model_detail_state(view: Option<ModelDetailViewType>) -> ModelDetailState {
+        ModelDetailState {
+            model_name: "gpt-5".to_string(),
+            group_key: "gpt-5".to_string(),
+            provider: "openai".to_string(),
+            color_key: "gpt-5".to_string(),
+            active_view: view,
+            menu_cursor: 0,
+        }
+    }
+
+    fn hourly_model_info(display_name: &str) -> HourlyModelInfo {
+        HourlyModelInfo {
+            provider: "openai".to_string(),
+            display_name: display_name.to_string(),
+            color_key: display_name.to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            messages: 0,
+        }
+    }
+
+    fn model_day(date: &str) -> ModelDayUsage {
+        ModelDayUsage {
+            date: chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            messages: 0,
+            performance: tokscale_core::ModelPerformance::default(),
+        }
+    }
+
+    fn model_usage(model: &str, group_key: &str, daily: Vec<ModelDayUsage>) -> ModelUsage {
+        ModelUsage {
+            model: model.to_string(),
+            color_key: model.to_string(),
+            provider: "openai".to_string(),
+            client: "codex".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            machine: None,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            performance: tokscale_core::ModelPerformance::default(),
+            session_count: 0,
+            group_key: group_key.to_string(),
+            daily,
+        }
+    }
+
+    #[test]
+    fn test_current_count_label_keeps_model_count_under_detail_menu() {
+        // The picker menu is an overlay: models.rs still renders the Models
+        // table beneath it, so the count must keep describing that table
+        // rather than the five fixed breakdown options.
+        let mut app = make_app_on(Tab::Models);
+        app.data.models = vec![
+            model_usage("gpt-5", "ws-a:gpt-5", Vec::new()),
+            model_usage("gpt-4", "ws-b:gpt-4", Vec::new()),
+        ];
+        app.model_detail = Some(model_detail_state(None));
+
+        assert_eq!(current_count_label(&app), " (2 models)");
+    }
+
+    #[test]
+    fn test_current_count_label_uses_model_detail_view_row_count() {
+        let mut app = make_app_on(Tab::Models);
+        // Two Models-tab rows share the same display name but resolve by
+        // group key; the opened detail is scoped to one of them and holds a
+        // single day, so the detail count (1) differs from the top-level
+        // model count (2). Only a detail-aware arm reports "1".
+        app.data.models = vec![
+            model_usage("gpt-5", "ws-a:gpt-5", vec![model_day("2026-01-02")]),
+            model_usage("gpt-5", "ws-b:gpt-5", vec![model_day("2026-01-03")]),
+        ];
+        app.model_detail = Some(ModelDetailState {
+            model_name: "gpt-5".to_string(),
+            group_key: "ws-a:gpt-5".to_string(),
+            provider: "openai".to_string(),
+            color_key: "gpt-5".to_string(),
+            active_view: Some(ModelDetailViewType::Daily),
+            menu_cursor: 0,
+        });
+
+        assert_eq!(current_count_label(&app), " (1 days)");
+    }
+
+    #[test]
+    fn test_current_count_label_names_each_model_detail_view_unit() {
+        // Every detail view counts a different row unit; labelling them all
+        // "models" reported day/hour/client/session/month rows as models.
+        let cases = [
+            (ModelDetailViewType::Daily, " (0 days)"),
+            (ModelDetailViewType::Hourly, " (0 hours)"),
+            (ModelDetailViewType::Clients, " (0 clients)"),
+            (ModelDetailViewType::Sessions, " (0 sessions)"),
+            (ModelDetailViewType::Monthly, " (0 months)"),
+        ];
+
+        for (view, expected) in cases {
+            let mut app = make_app_on(Tab::Models);
+            app.model_detail = Some(model_detail_state(Some(view)));
+
+            assert_eq!(current_count_label(&app), expected, "view={view:?}");
+        }
+    }
+
+    #[test]
+    fn test_current_count_label_uses_hourly_detail_row_count() {
+        let mut app = make_app_on(Tab::Hourly);
+        // One hour in the table list, holding two models. The detail view for
+        // that hour therefore has 2 rows while the tab-level count is 1 hour;
+        // the two are distinguishable only if the detail arm is taken.
+        let dt = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        app.data.hourly = vec![HourlyUsage {
+            datetime: dt,
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            clients: BTreeSet::new(),
+            models: BTreeMap::from([
+                ("model-a".to_string(), hourly_model_info("Model A")),
+                ("model-b".to_string(), hourly_model_info("Model B")),
+            ]),
+            source_breakdown: BTreeMap::new(),
+            client_breakdown: BTreeMap::new(),
+            message_count: 0,
+            turn_count: 0,
+        }];
+        app.selected_hourly_detail_dt = Some(dt);
+
+        assert_eq!(current_count_label(&app), " (2 models)");
     }
 
     #[test]
