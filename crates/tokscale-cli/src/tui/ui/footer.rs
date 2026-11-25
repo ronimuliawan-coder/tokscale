@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::spinner::{get_phase_message, get_scanner_spans};
 use super::widgets::{format_cost, format_tokens};
-use crate::tui::app::{App, ClickAction, SortField, Tab};
+use crate::tui::app::{App, ClickAction, ModelDetailViewType, SortField, Tab};
 use crate::tui::i18n::{format_count, tr, tr_with_glyphs, MessageKey, TuiLanguage};
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -217,11 +217,17 @@ fn current_count_label(app: &App) -> String {
         Tab::Models if app.is_model_trend_active() => {
             format_count(lang, app.model_trend_rows_len(), MessageKey::CountDays)
         }
-        Tab::Models if app.is_model_detail_view_active() => format_count(
-            lang,
-            app.get_model_detail_rows_count(),
-            MessageKey::CountModels,
-        ),
+        Tab::Models if app.is_model_detail_view_active() => {
+            let key = match app.model_detail_view_type() {
+                Some(ModelDetailViewType::Daily) => MessageKey::CountDays,
+                Some(ModelDetailViewType::Hourly) => MessageKey::CountHours,
+                Some(ModelDetailViewType::Clients) => MessageKey::CountClients,
+                Some(ModelDetailViewType::Sessions) => MessageKey::CountSessions,
+                Some(ModelDetailViewType::Monthly) => MessageKey::CountMonths,
+                None => MessageKey::CountModels,
+            };
+            format_count(lang, app.get_model_detail_rows_count(), key)
+        }
         Tab::Overview | Tab::Models => {
             format_count(lang, app.data.models.len(), MessageKey::CountModels)
         }
@@ -1225,7 +1231,27 @@ mod tests {
             menu_cursor: 0,
         });
 
-        assert_eq!(current_count_label(&app), " (1 models)");
+        assert_eq!(current_count_label(&app), " (1 days)");
+    }
+
+    #[test]
+    fn test_current_count_label_names_each_model_detail_view_unit() {
+        // Every detail view counts a different row unit; labelling them all
+        // "models" reported day/hour/client/session/month rows as models.
+        let cases = [
+            (ModelDetailViewType::Daily, " (0 days)"),
+            (ModelDetailViewType::Hourly, " (0 hours)"),
+            (ModelDetailViewType::Clients, " (0 clients)"),
+            (ModelDetailViewType::Sessions, " (0 sessions)"),
+            (ModelDetailViewType::Monthly, " (0 months)"),
+        ];
+
+        for (view, expected) in cases {
+            let mut app = make_app_on(Tab::Models);
+            app.model_detail = Some(model_detail_state(Some(view)));
+
+            assert_eq!(current_count_label(&app), expected, "view={view:?}");
+        }
     }
 
     #[test]

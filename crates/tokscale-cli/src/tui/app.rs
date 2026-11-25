@@ -3846,6 +3846,10 @@ impl App {
             .is_some_and(|s| s.active_view.is_some())
     }
 
+    pub fn model_detail_view_type(&self) -> Option<ModelDetailViewType> {
+        self.model_detail.as_ref().and_then(|s| s.active_view)
+    }
+
     pub(crate) fn open_selected_model_detail_menu(&mut self) {
         // A trend renders instead of the menu and keeps its own date-row
         // selection index; opening the menu from it would build an invisible
