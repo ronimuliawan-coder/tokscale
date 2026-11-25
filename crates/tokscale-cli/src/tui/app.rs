@@ -3923,7 +3923,7 @@ impl App {
     pub fn get_model_daily_rows_scoped(&self, model: &str, group_key: &str) -> Vec<ModelDailyRow> {
         if let Some(row) = self.resolve_model_usage_row(model, group_key) {
             if !row.daily.is_empty() {
-                return row
+                let mut rows: Vec<ModelDailyRow> = row
                     .daily
                     .iter()
                     .map(|d| ModelDailyRow {
@@ -3933,9 +3933,36 @@ impl App {
                         messages: d.messages,
                     })
                     .collect();
+                self.sort_model_daily_rows(&mut rows);
+                return rows;
             }
         }
         self.get_model_daily_rows(model)
+    }
+
+    fn sort_model_daily_rows(&self, rows: &mut [ModelDailyRow]) {
+        match (self.sort_field, self.sort_direction) {
+            (SortField::Cost, SortDirection::Descending) => {
+                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| b.date.cmp(&a.date)))
+            }
+            (SortField::Cost, SortDirection::Ascending) => {
+                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.date.cmp(&b.date)))
+            }
+            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
+                b.tokens
+                    .total()
+                    .cmp(&a.tokens.total())
+                    .then_with(|| b.date.cmp(&a.date))
+            }),
+            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
+                a.tokens
+                    .total()
+                    .cmp(&b.tokens.total())
+                    .then_with(|| a.date.cmp(&b.date))
+            }),
+            (SortField::Date, SortDirection::Ascending) => rows.sort_by_key(|a| a.date),
+            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.date)),
+        }
     }
 
     pub fn get_model_daily_rows(&self, model: &str) -> Vec<ModelDailyRow> {
@@ -3974,28 +4001,7 @@ impl App {
             }
         }
 
-        match (self.sort_field, self.sort_direction) {
-            (SortField::Cost, SortDirection::Descending) => {
-                rows.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| b.date.cmp(&a.date)))
-            }
-            (SortField::Cost, SortDirection::Ascending) => {
-                rows.sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.date.cmp(&b.date)))
-            }
-            (SortField::Tokens, SortDirection::Descending) => rows.sort_by(|a, b| {
-                b.tokens
-                    .total()
-                    .cmp(&a.tokens.total())
-                    .then_with(|| b.date.cmp(&a.date))
-            }),
-            (SortField::Tokens, SortDirection::Ascending) => rows.sort_by(|a, b| {
-                a.tokens
-                    .total()
-                    .cmp(&b.tokens.total())
-                    .then_with(|| a.date.cmp(&b.date))
-            }),
-            (SortField::Date, SortDirection::Ascending) => rows.sort_by_key(|a| a.date),
-            _ => rows.sort_by_key(|a| std::cmp::Reverse(a.date)),
-        }
+        self.sort_model_daily_rows(&mut rows);
 
         rows
     }
@@ -4471,7 +4477,9 @@ mod tests {
     use crate::commands::usage::{
         UsageAccount, UsageFetchDiagnostic, UsageFetchReport, UsageMetric, UsageOutput,
     };
-    use crate::tui::data::{DailyModelInfo, DailySourceInfo, ModelUsage, TokenBreakdown};
+    use crate::tui::data::{
+        DailyModelInfo, DailySourceInfo, ModelDayUsage, ModelUsage, TokenBreakdown,
+    };
     use chrono::{NaiveDate, NaiveDateTime};
     use std::collections::{BTreeMap, BTreeSet};
     use std::{env, fs};
@@ -5297,6 +5305,137 @@ mod tests {
             .map(|m| m.month.as_str())
             .collect::<Vec<_>>();
         assert_eq!(sorted, vec!["2026-04", "2026-06", "2026-05"]);
+    }
+
+    #[test]
+    fn test_scoped_model_daily_rows_apply_active_sort() {
+        let mut app = make_app();
+        app.current_tab = Tab::Models;
+        app.sort_field = SortField::Cost;
+        app.sort_direction = SortDirection::Descending;
+        // One Models row carrying three stored days in oldest-first order. The
+        // row's USD costs descend, so a cost-descending sort must reorder them
+        // to 2026-01-03, 2026-01-02, 2026-01-01. Returning stored order (the
+        // pre-fix behaviour) leaves 2026-01-01 first.
+        app.data.models = vec![ModelUsage {
+            model: "model1".to_string(),
+            color_key: "model1".to_string(),
+            provider: "provider1".to_string(),
+            client: "opencode".to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: 0.0,
+            performance: Default::default(),
+            session_count: 1,
+            workspace_key: None,
+            workspace_label: None,
+            machine: None,
+            group_key: "group1".to_string(),
+            daily: vec![
+                ModelDayUsage {
+                    date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 1.0,
+                    messages: 1,
+                    performance: Default::default(),
+                },
+                ModelDayUsage {
+                    date: NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 2.0,
+                    messages: 1,
+                    performance: Default::default(),
+                },
+                ModelDayUsage {
+                    date: NaiveDate::from_ymd_opt(2026, 1, 3).unwrap(),
+                    tokens: TokenBreakdown::default(),
+                    cost: 3.0,
+                    messages: 1,
+                    performance: Default::default(),
+                },
+            ],
+        }];
+
+        let dates: Vec<String> = app
+            .get_model_daily_rows_scoped("model1", "group1")
+            .iter()
+            .map(|r| r.date.to_string())
+            .collect();
+
+        assert_eq!(dates, vec!["2026-01-03", "2026-01-02", "2026-01-01"]);
+    }
+
+    #[test]
+    fn test_scoped_model_daily_rows_sort_matches_fallback() {
+        // The two data paths must order the same model's days identically.
+        // App A carries per-row daily data (scoped path); app B carries the
+        // same days only in the aggregate list (fallback path). Before the
+        // fix A returned stored order while B sorted, so they disagreed.
+        let build = |with_row_daily: bool| {
+            let mut app = make_app();
+            app.current_tab = Tab::Models;
+            app.sort_field = SortField::Tokens;
+            app.sort_direction = SortDirection::Descending;
+            app.data.daily = vec![
+                daily_usage("2026-02-01", 1.0, vec![("model1", "provider1", 1.0)]),
+                daily_usage("2026-02-02", 9.0, vec![("model1", "provider1", 9.0)]),
+            ];
+            let daily = if with_row_daily {
+                vec![
+                    ModelDayUsage {
+                        date: NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+                        tokens: TokenBreakdown {
+                            input: 100,
+                            ..Default::default()
+                        },
+                        cost: 0.0,
+                        messages: 1,
+                        performance: Default::default(),
+                    },
+                    ModelDayUsage {
+                        date: NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+                        tokens: TokenBreakdown {
+                            input: 900,
+                            ..Default::default()
+                        },
+                        cost: 0.0,
+                        messages: 1,
+                        performance: Default::default(),
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+            app.data.models = vec![ModelUsage {
+                model: "model1".to_string(),
+                color_key: "model1".to_string(),
+                provider: "provider1".to_string(),
+                client: "opencode".to_string(),
+                tokens: TokenBreakdown::default(),
+                cost: 0.0,
+                performance: Default::default(),
+                session_count: 1,
+                workspace_key: None,
+                workspace_label: None,
+                machine: None,
+                group_key: "group1".to_string(),
+                daily,
+            }];
+            app
+        };
+
+        let scoped_dates: Vec<String> = build(true)
+            .get_model_daily_rows_scoped("model1", "group1")
+            .iter()
+            .map(|r| r.date.to_string())
+            .collect();
+        let fallback_dates: Vec<String> = build(false)
+            .get_model_daily_rows_scoped("model1", "group1")
+            .iter()
+            .map(|r| r.date.to_string())
+            .collect();
+
+        assert_eq!(scoped_dates, vec!["2026-02-02", "2026-02-01"]);
+        assert_eq!(scoped_dates, fallback_dates);
     }
 
     #[test]
